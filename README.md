@@ -66,6 +66,13 @@ ministère de la Santé (mise à jour deux fois par jour).
 - Confirmation sur deux lectures identiques avant validation
 - Retour haptique + bip distinct pour succès / échec
 
+**Enrichissement depuis la BDPM**
+- Nom réel du médicament, forme pharmaceutique, conditions de délivrance
+- **Nombre de comprimés par boîte**, déduit du libellé de conditionnement —
+  couverture mesurée à 99,7 % sur les formes orales solides (voir §11)
+- En cas de doute, la quantité est **omise plutôt qu'approximée** : un nombre
+  faux dans une armoire à pharmacie est pire que pas de nombre
+
 **Fiabilité des données**
 - Parser GS1 complet (AI à longueur fixe et variable, séparateurs FNC1)
 - Vérification de la clé de contrôle GTIN — rejette les lectures corrompues
@@ -636,6 +643,24 @@ Logs utiles : `adb logcat -s PharmaScan PharmaScan/HA PharmaScan/API PharmaScan/
   de disparition du service, l'alternative est de télécharger l'export
   complet de la BDPM (~20 Mo) et de l'embarquer en base locale — plus
   robuste, mais plus lourd.
+- **La quantité par boîte est déduite d'un texte libre**, pas d'un champ
+  structuré : la BDPM ne publie pas le nombre d'unités, seulement un libellé
+  de conditionnement (« plaquettes PVC-Aluminium de 16 comprimés »).
+  L'extraction a été mesurée sur **2019 présentations réelles** :
+  99,7 % de couverture sur les formes orales solides, distribution des
+  valeurs conforme aux conditionnements français (30, 90, 28, 12, 60…),
+  aucune valeur aberrante. Deux pièges sont traités explicitement dans
+  `MedicamentApi.extractQuantity()` et ne doivent pas être « simplifiés »
+  sans refaire ces mesures :
+  1. l'API renvoie **toutes** les présentations du médicament, pas seulement
+     celle du CIP13 demandé (31 % en ont plusieurs) — sans filtrage, une
+     boîte de 8 Doliprane s'afficherait à 100 comprimés ;
+  2. « 30 plaquettes de 1 comprimé » vaut 30, pas 1 — ce motif représente
+     14 % des formes solides, une lecture naïve se tromperait sur une boîte
+     sur sept, en silence.
+  Les formes liquides et les crèmes n'ont volontairement pas de quantité :
+  elles se comptent en ml ou en g, un « nombre de comprimés » n'y a pas de
+  sens.
 - **Pas de suppression depuis l'appli.** Retirer un médicament de l'armoire
   se fait côté Home Assistant, en cochant l'item.
 - **Pas de gestion des quantités.** Une boîte = un item. Un médicament pris

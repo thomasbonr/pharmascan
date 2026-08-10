@@ -170,10 +170,41 @@ class Prefs(context: Context) {
 
     // ---- Cache des libellés CIP13 -> nom ---------------------------------
 
-    fun cachedName(cip13: String): String? = cache.getString("name_$cip13", null)
+    /**
+     * Cache des informations médicament. Stocké en JSON plutôt qu'en chaîne
+     * simple depuis l'ajout du conditionnement : un CIP déjà vu ne doit
+     * redéclencher aucune requête, quantité comprise.
+     */
+    fun cachedInfo(cip13: String): MedicamentApi.Result? {
+        val raw = cache.getString("info_$cip13", null) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            val conditions = o.optJSONArray("conditions")?.let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optString(it).takeIf(String::isNotBlank) }
+            } ?: emptyList()
+            MedicamentApi.Result(
+                name = o.getString("name"),
+                fromCache = true,
+                quantityLabel = o.optString("qty").ifBlank { null },
+                form = o.optString("form").ifBlank { null },
+                conditions = conditions
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Cache médicament illisible pour $cip13", e)
+            null
+        }
+    }
 
-    fun cacheName(cip13: String, name: String) =
-        cache.edit().putString("name_$cip13", name).apply()
+    fun cacheInfo(cip13: String, result: MedicamentApi.Result) {
+        val name = result.name ?: return
+        val o = JSONObject().apply {
+            put("name", name)
+            put("qty", result.quantityLabel ?: "")
+            put("form", result.form ?: "")
+            put("conditions", JSONArray().also { arr -> result.conditions.forEach(arr::put) })
+        }
+        cache.edit().putString("info_$cip13", o.toString()).apply()
+    }
 
     // ---- Historique consultable (dossier des boîtes déjà scannées) -------
 

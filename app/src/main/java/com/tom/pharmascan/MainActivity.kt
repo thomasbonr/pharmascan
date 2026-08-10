@@ -687,12 +687,18 @@ class MainActivity : ComponentActivity() {
 
             val label = buildString {
                 append(name)
+                lookup.quantityLabel?.let { append(" · $it") }
                 data.expiryIso?.let { append(" — périme le ${frenchDate(it)}") }
             }
             val description = buildString {
                 append("CIP13 : $cip13")
+                lookup.quantityLabel?.let { append("\nConditionnement : $it") }
+                lookup.form?.let { append("\nForme : $it") }
                 data.lot?.let { append("\nLot : $it") }
                 data.serial?.let { append("\nSérie : $it") }
+                if (lookup.conditions.isNotEmpty()) {
+                    append("\nDélivrance : ${lookup.conditions.joinToString(", ")}")
+                }
                 data.notices.forEach { append("\n[!] $it") }
                 if (lookup.error != null) append("\n(nom non résolu : ${lookup.error})")
             }
