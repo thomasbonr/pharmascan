@@ -269,6 +269,15 @@ Deux détails de conception à ne pas « simplifier » :
 - **`mode: queued`** : en vidant une armoire, plusieurs scans peuvent arriver
   coup sur coup, et le mode `single` par défaut en jetterait silencieusement.
 
+> **⚠️ Vérifie `local_only` après avoir sauvegardé.** Le YAML fourni contient
+> `local_only: true`, mais l'éditeur graphique de Home Assistant peut le
+> remettre à `false` en enregistrant — constaté en conditions réelles. Un
+> `false` rend le webhook joignable depuis Internet si ton instance est
+> exposée, ce qui annule l'essentiel du bénéfice. Après avoir créé
+> l'automatisation, rouvre-la en mode YAML et confirme que la ligne est
+> toujours là. C'est le genre de régression parfaitement silencieuse : tout
+> continue de fonctionner, seule la surface d'attaque change.
+
 > **Limite assumée du mode webhook** : un webhook ne renvoie rien. Le bouton
 > de test ne peut donc pas vérifier que l'automatisation existe — Home
 > Assistant répond d'ailleurs `200` même pour un `webhook_id` inconnu, et

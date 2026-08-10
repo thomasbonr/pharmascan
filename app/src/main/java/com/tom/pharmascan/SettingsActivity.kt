@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import com.tom.pharmascan.ui.PharmaScanTheme
 import com.tom.pharmascan.ui.StatusError
 import com.tom.pharmascan.ui.StatusSuccess
+import com.tom.pharmascan.ui.StatusWarning
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 
@@ -552,11 +553,19 @@ private fun AutomationCard(yaml: String) {
                 style = MaterialTheme.typography.titleMedium
             )
             Text(
-                "Paramètres > Automatisations > Créer > Modifier en YAML, puis colle ceci. " +
-                    "L'option local_only refuse les appels venant d'Internet.",
+                "Paramètres > Automatisations > Créer > Modifier en YAML, puis colle ceci.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                "⚠ Après avoir enregistré, rouvre l'automatisation en YAML et vérifie que " +
+                    "local_only est toujours à true : l'éditeur graphique de Home Assistant " +
+                    "peut le repasser à false en sauvegardant. À false, le webhook devient " +
+                    "joignable depuis Internet si ton instance est exposée.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = StatusWarning,
+                modifier = Modifier.padding(top = 8.dp, bottom = 10.dp)
             )
             SelectionContainer {
                 Text(
