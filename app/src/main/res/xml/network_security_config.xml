@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Home Assistant tourne très souvent en HTTP simple sur le réseau local.
+  Depuis Android 9 (API 28), le trafic en clair est bloqué par défaut.
+
+  IMPORTANT : les balises <domain> n'acceptent PAS de notation CIDR.
+  Il faut donc lister le nom d'hôte ou l'adresse IP EXACTE de ton instance.
+  Remplace la ligne ci-dessous par la tienne (ex. 192.168.1.42, ou ton IP
+  Tailscale 100.x.y.z).
+
+  Le reste du trafic, notamment l'API Médicaments FR, reste forcé en HTTPS.
+
+  Si tu accèdes à HA en HTTPS via ton reverse proxy Caddy, tu peux supprimer
+  ce fichier et l'attribut android:networkSecurityConfig du manifest : rien
+  à configurer.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">homeassistant.local</domain>
+        <domain includeSubdomains="true">localhost</domain>
+
+        <!-- >>> REMPLACE / COMPLÈTE PAR TON ADRESSE EXACTE <<< -->
+        <domain includeSubdomains="false">192.168.1.42</domain>
+    </domain-config>
+</network-security-config>

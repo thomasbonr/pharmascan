@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Icône : une croix de pharmacie stylisée composée de modules carrés, en
+  référence au DataMatrix. Vectorielle, donc nette à toutes les densités et
+  quelques centaines d'octets seulement.
+  Zone de sécurité des icônes adaptatives : le motif reste dans les 66 dp
+  centraux du canevas de 108 dp.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Barre verticale de la croix -->
+    <path android:fillColor="#5BE3B0" android:pathData="M48,30h12v12h-12z" />
+    <path android:fillColor="#5BE3B0" android:pathData="M48,46h12v12h-12z" />
+    <path android:fillColor="#5BE3B0" android:pathData="M48,62h12v12h-12z" />
+
+    <!-- Barre horizontale -->
+    <path android:fillColor="#5BE3B0" android:pathData="M32,46h12v12h-12z" />
+    <path android:fillColor="#5BE3B0" android:pathData="M64,46h12v12h-12z" />
+
+    <!-- Modules d'angle, évoquant les repères d'un DataMatrix -->
+    <path android:fillColor="#00A87A" android:pathData="M32,30h8v8h-8z" />
+    <path android:fillColor="#00A87A" android:pathData="M68,30h8v8h-8z" />
+    <path android:fillColor="#00A87A" android:pathData="M32,66h8v8h-8z" />
+    <path android:fillColor="#00A87A" android:pathData="M68,66h8v8h-8z" />
+</vector>

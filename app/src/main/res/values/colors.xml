@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Doit correspondre à Ink dans ui/Theme.kt : évite le flash blanc au
+         lancement, avant que Compose ne prenne la main. -->
+    <color name="launch_background">#0D1512</color>
+    <color name="ic_launcher_background">#0D1512</color>
+</resources>
