@@ -74,6 +74,23 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_AUTO_ZOOM, true)
         set(v) = prefs.edit().putBoolean(KEY_AUTO_ZOOM, v).apply()
 
+    /**
+     * Force le capteur arrière capable de faire le point le plus près.
+     * DÉSACTIVÉ par défaut : le capteur par défaut est celui qu'utilise
+     * l'appli photo native, et c'est le bon choix sur la grande majorité des
+     * appareils. À n'activer que si l'objectif principal ne descend pas assez
+     * bas — au risque, sur certains appareils, de tomber sur un objectif dont
+     * l'AF est moins bon.
+     */
+    var macroLensEnabled: Boolean
+        get() = prefs.getBoolean(KEY_MACRO_LENS, false)
+        set(v) = prefs.edit().putBoolean(KEY_MACRO_LENS, v).apply()
+
+    /** Affiche l'état réel de l'autofocus à l'écran, pour diagnostiquer. */
+    var afDiagnosticsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AF_DIAGNOSTICS, false)
+        set(v) = prefs.edit().putBoolean(KEY_AF_DIAGNOSTICS, v).apply()
+
     val isConfigured: Boolean
         get() = haUrl.isNotBlank() && haToken.isNotBlank() && todoEntity.isNotBlank()
 
@@ -170,6 +187,8 @@ class Prefs(context: Context) {
         private const val KEY_ALERT_MONTHS = "alert_months"
         private const val KEY_SOUND = "sound_enabled"
         private const val KEY_AUTO_ZOOM = "auto_zoom_enabled"
+        private const val KEY_MACRO_LENS = "macro_lens_enabled"
+        private const val KEY_AF_DIAGNOSTICS = "af_diagnostics_enabled"
         private const val KEY_QUEUE = "pending_queue"
         private const val KEY_SCANNED = "scanned_keys"
         private const val KEY_HISTORY = "history_entries"

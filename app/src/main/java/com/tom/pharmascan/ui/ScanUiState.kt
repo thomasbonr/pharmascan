@@ -36,6 +36,9 @@ class ScanUiState {
     var pendingCount by mutableStateOf(0)
     var sessionCount by mutableStateOf(0)
 
+    /** Ligne de diagnostic autofocus, non nulle seulement si le réglage est actif. */
+    var debugInfo by mutableStateOf<String?>(null)
+
     /** Historique de la session courante, le plus récent en tête. */
     val recent = mutableStateListOf<ScanEntry>()
 

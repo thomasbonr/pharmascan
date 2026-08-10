@@ -239,52 +239,83 @@ Avec la résolution d'analyse par défaut de CameraX (640×480) et un
 téléphone tenu à bout de bras, le code occupe 30 à 40 pixels. Flou par
 dessus. Le scan ne marche jamais, et on ne comprend pas pourquoi.
 
-### Les six mesures appliquées
+### L'erreur à ne pas commettre : « aider » l'autofocus
 
-**1. Choix du capteur arrière** *(souvent la cause principale d'un AF qui n'accroche jamais)*
-Sur un téléphone à plusieurs caméras arrière, `CameraSelector.DEFAULT_BACK_CAMERA`
-pointe presque toujours vers le capteur principal, dont la distance de mise
-au point minimale (10-15 cm sur beaucoup d'appareils) est **supérieure** à
-la distance de scan visée (8-12 cm) : l'autofocus hunte en continu et
-n'accroche jamais, ce qui se ressent comme un AF simplement défaillant.
-L'appli interroge `CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE`
-de chaque capteur arrière disponible et sélectionne automatiquement celui
-qui fait le point le plus près (souvent l'ultra grand-angle), au lieu du
-premier de la liste. Voir `MainActivity.pickBestBackCameraSelector()`.
+Pendant plusieurs versions, l'appli relançait `startFocusAndMetering()`
+toutes les 1,2 s tant que rien n'était décodé, avec l'idée de réveiller un
+autofocus paresseux. **C'était la cause du problème, pas le remède.**
 
-**2. Résolution d'analyse relevée à 1920×1080**
-`setTargetResolution(Size(1920, 1080))` sur l'`ImageAnalysis`. Levier
-efficace une fois le bon capteur choisi. Coût : quelques fps d'analyse en
-moins, sans conséquence ici.
+- `startFocusAndMetering()` fait *sortir* du mode continu : il lance une
+  mise au point ponctuelle qui reste verrouillée jusqu'à son
+  auto-annulation.
+- Un balayage AF complet demande souvent **plus de 1,2 s**.
+- On interrompait donc chaque balayage avant sa convergence pour en
+  relancer un autre. L'objectif pompait indéfiniment sans jamais accrocher.
 
-**3. Autofocus continu forcé via Camera2Interop**
-Beaucoup de téléphones utilisent par défaut un AF paresseux qui ne
-re-converge pas quand on approche l'objet. On force explicitement
-`CONTROL_AF_MODE_CONTINUOUS_PICTURE` sur la requête de capture.
+Plus l'appli « insistait », moins elle faisait le point.
 
-**4. Auto-zoom ML Kit** *(optionnel — Réglages → Zoom automatique)*
+Le diagnostic décisif est venu d'un test simple : **l'appli photo native fait
+le point parfaitement sur le même téléphone** (Galaxy S23+). Quand le
+matériel démontre qu'il sait faire, le problème est forcément logiciel — et
+la bonne réponse est d'en faire *moins*, pas plus.
+
+Règle appliquée depuis : **on laisse l'AF continu travailler.** Aucune
+commande de mise au point n'est émise automatiquement. La seule commande de
+récupération autorisée est `cancelFocusAndMetering()`, qui *rend* la main au
+mode continu — jamais un nouveau déclenchement.
+
+### Les mesures effectivement appliquées
+
+**1. Autofocus continu forcé, puis laissé tranquille**
+`CONTROL_AF_MODE_CONTINUOUS_PICTURE` via Camera2Interop, plus
+`CONTROL_MODE_AUTO` et `CONTROL_SCENE_MODE_DISABLED` — certains
+constructeurs activent des modes scène qui reprennent la main sur l'AF.
+Ensuite, on n'y touche plus.
+
+**2. Surveillance passive de l'état AF**
+Un `CaptureCallback` de session lit le `CONTROL_AF_STATE` réel. Si l'AF se
+retrouve *verrouillé* (`FOCUSED_LOCKED` / `NOT_FOCUSED_LOCKED`, typiquement
+l'héritage d'un tap-to-focus) alors que plus rien ne se décode, on émet un
+`cancelFocusAndMetering()` — une seule commande, espacée d'au moins 2,5 s,
+jamais en boucle serrée.
+
+**3. Capteur : celui de l'appli native, par défaut**
+On garde `DEFAULT_BACK_CAMERA`. Un objectif à focus rapproché peut être
+forcé dans **Réglages → Mise au point**, mais uniquement parmi les capteurs
+qui déclarent un vrai autofocus : sur beaucoup de Samsung (dont la série S),
+l'ultra grand-angle est à **focus fixe**, et le sélectionner supprimerait
+purement et simplement l'autofocus. Le filtre exige donc
+`LENS_INFO_MINIMUM_FOCUS_DISTANCE > 0` **et** `CONTINUOUS_PICTURE` dans
+`CONTROL_AF_AVAILABLE_MODES`.
+
+**4. Résolution d'analyse relevée à 1920×1080**
+Via `ResolutionSelector` sur l'`ImageAnalysis`. Coût : quelques fps
+d'analyse en moins, sans conséquence ici.
+
+**5. Auto-zoom ML Kit** *(optionnel — Réglages → Zoom automatique)*
 `ZoomSuggestionOptions` : quand ML Kit repère un code présent mais trop
-petit pour être décodé, il calcule lui-même le facteur de zoom nécessaire
-et nous le demande via un callback. Utile si le code est scanné trop loin ;
-**ça ne corrige pas un problème de mise au point** (mesure 1), seulement un
-cadrage trop petit — désactivable dans les réglages si le changement de
-zoom perturbe plus qu'il n'aide sur un appareil donné. Le réticule passe à
-l'orange pendant cette phase, pour signaler « je te vois, je zoome ».
-Nécessite ML Kit **17.3.0** minimum.
-
-**5. Relance périodique de l'AF**
-Si rien n'est décodé pendant 2 secondes, on redéclenche une mise au point
-sur une zone large (~60 % du cadre, alignée sur le réticule) plutôt qu'un
-point central étroit, et **en AF seul** — sans re-mesurer l'exposition à
-chaque relance, ce qui produisait un scintillement de luminosité
-perceptible pendant la visée. Sans cette relance, le capteur reste parfois
-verrouillé sur l'arrière-plan pendant qu'on approche la boîte, et ne
-re-converge jamais.
+petit pour être décodé, il calcule le facteur de zoom nécessaire et nous le
+demande via un callback. **Ça ne corrige pas un problème de mise au point**,
+seulement un cadrage trop petit. Le réticule passe à l'orange pendant cette
+phase. Nécessite ML Kit **17.3.0** minimum.
 
 **6. Tap-to-focus et pinch-to-zoom**
-Reprise en main manuelle immédiate. La mise au point manuelle s'auto-annule
-au bout de 3 secondes pour repasser en AF continu, sinon la caméra reste
-bloquée sur un plan devenu obsolète.
+Seul chemin qui déclenche une mise au point explicite, sur action de
+l'utilisateur. Auto-annulation à 2 s pour revenir vite en AF continu.
+
+### Diagnostiquer quand ça coince
+
+**Réglages → Mise au point → Diagnostic autofocus** affiche en direct
+l'état réel de l'AF, la distance de mise au point courante et l'objectif
+utilisé. C'est ce qui permet de distinguer trois situations que l'œil
+confond :
+
+| Affichage | Interprétation |
+|---|---|
+| `AF recherche` en boucle | L'AF balaye sans converger — sujet trop près de la distance mini de l'objectif |
+| `AF net` mais rien ne se décode | La mise au point est bonne : le problème est ailleurs (taille du code, contraste, éclairage) |
+| `AF ÉCHEC (verrouillé)` | L'AF a abandonné — trop près, ou pas assez de contraste pour accrocher |
+| Distance affichée ≈ `∞` | L'objectif fait le point à l'infini : il ne voit pas la boîte |
 
 ### En complément : confirmation multi-frames
 
@@ -299,13 +330,13 @@ clé de contrôle GTIN, un faux positif est très improbable.
 - **Torche** : les DataMatrix sont souvent imprimés en gris pâle sur carton
   blanc, le contraste est mauvais en lumière ambiante.
 - **Ne pas coller la boîte** : sous ~7 cm, la plupart des capteurs
-  n'arrivent plus à faire le point du tout — y compris le capteur
-  automatiquement sélectionné pour son focus rapproché (mesure 1).
+  n'arrivent plus à faire le point du tout.
 - Monter `REQUIRED_CONSECUTIVE_READS` à 3 si des lectures erronées passent.
-- Si l'AF reste mauvais malgré tout sur un appareil donné, vérifier dans
-  `adb logcat -s PharmaScan` la ligne `Capteur retenu : id=...` au
-  lancement : elle indique la distance de mise au point minimale mesurée
-  pour le capteur choisi, utile pour comprendre si le matériel est en cause.
+- **Activer le diagnostic autofocus** (voir le tableau ci-dessus) plutôt que
+  de deviner : il dit en une seconde si la mise au point est en cause ou non.
+- Comparer avec l'appli photo native au même endroit et à la même distance.
+  Si elle fait le point et pas nous, c'est un bug de l'appli — pas du
+  matériel, et ça vaut un rapport.
 
 ---
 
@@ -380,7 +411,7 @@ avant de les coller dans une automatisation.
 
 | Fichier | Rôle | Points d'attention |
 |---|---|---|
-| `MainActivity.kt` | Caméra, focus, orchestration | Stratégie de focus documentée en tête de fichier ; **l'ordre d'initialisation y est critique** (voir §6) |
+| `MainActivity.kt` | Caméra, focus, orchestration | Stratégie de focus documentée en tête de fichier ; **ne jamais déclencher l'AF automatiquement** et **l'ordre d'initialisation est critique** (voir §6) |
 | `Gs1Parser.kt` | Décodage GS1 | Table des AI, checksum GTIN, dates fin de mois — 30 tests |
 | `MedicamentApi.kt` | CIP13 → nom | Échoue en silence par conception, cache local |
 | `HomeAssistant.kt` | Envoi + file d'attente | Distingue erreurs temporaires et définitives |

@@ -85,12 +85,16 @@ class SettingsActivity : ComponentActivity() {
                     initialEntity = prefs.todoEntity,
                     initialSound = prefs.soundEnabled,
                     initialAutoZoom = prefs.autoZoomEnabled,
-                    onSave = { url, token, entity, sound, autoZoom ->
+                    initialMacroLens = prefs.macroLensEnabled,
+                    initialAfDiagnostics = prefs.afDiagnosticsEnabled,
+                    onSave = { url, token, entity, sound, autoZoom, macroLens, afDiagnostics ->
                         prefs.haUrl = url
                         prefs.haToken = token
                         prefs.todoEntity = entity
                         prefs.soundEnabled = sound
                         prefs.autoZoomEnabled = autoZoom
+                        prefs.macroLensEnabled = macroLens
+                        prefs.afDiagnosticsEnabled = afDiagnostics
                     },
                     onTest = { callback ->
                         executor.execute {
@@ -119,7 +123,9 @@ private fun SettingsScreen(
     initialEntity: String,
     initialSound: Boolean,
     initialAutoZoom: Boolean,
-    onSave: (String, String, String, Boolean, Boolean) -> Unit,
+    initialMacroLens: Boolean,
+    initialAfDiagnostics: Boolean,
+    onSave: (String, String, String, Boolean, Boolean, Boolean, Boolean) -> Unit,
     onTest: ((String) -> Unit) -> Unit,
     onClearHistory: () -> Unit,
     onBack: () -> Unit
@@ -129,6 +135,8 @@ private fun SettingsScreen(
     var entity by remember { mutableStateOf(initialEntity) }
     var sound by remember { mutableStateOf(initialSound) }
     var autoZoom by remember { mutableStateOf(initialAutoZoom) }
+    var macroLens by remember { mutableStateOf(initialMacroLens) }
+    var afDiagnostics by remember { mutableStateOf(initialAfDiagnostics) }
     var tokenVisible by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -140,7 +148,7 @@ private fun SettingsScreen(
                 title = { Text("Réglages") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        onSave(url, token, entity, sound, autoZoom)
+                        onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics)
                         onBack()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
@@ -218,7 +226,7 @@ private fun SettingsScreen(
                     onClick = {
                         // On enregistre d'abord, sinon on testerait les
                         // anciennes valeurs.
-                        onSave(url, token, entity, sound, autoZoom)
+                        onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics)
                         testing = true
                         testResult = null
                         onTest { message ->
@@ -283,6 +291,46 @@ private fun SettingsScreen(
             }
 
             Spacer(Modifier.height(24.dp))
+            SectionTitle("Mise au point")
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Objectif à focus rapproché", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Par défaut, l'appli utilise le même objectif que l'appli photo native, " +
+                            "ce qui est le bon choix sur la plupart des téléphones. À n'activer " +
+                            "que si ton objectif principal n'arrive pas à faire le point à " +
+                            "8-12 cm. Nécessite de rouvrir l'écran de scan.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = macroLens, onCheckedChange = { macroLens = it })
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Diagnostic autofocus", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Affiche l'état réel de l'autofocus et la distance de mise au point " +
+                            "sur l'écran de scan. Utile pour comprendre si la caméra cherche, " +
+                            "reste floue, ou se verrouille au mauvais endroit.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = afDiagnostics, onCheckedChange = { afDiagnostics = it })
+            }
+
+            Spacer(Modifier.height(24.dp))
             SectionTitle("Maintenance")
 
             OutlinedButton(
@@ -303,7 +351,7 @@ private fun SettingsScreen(
             Spacer(Modifier.height(28.dp))
 
             Button(
-                onClick = { onSave(url, token, entity, sound, autoZoom); onBack() },
+                onClick = { onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics); onBack() },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Enregistrer et revenir au scan") }
 
