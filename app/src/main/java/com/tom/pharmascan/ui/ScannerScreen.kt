@@ -147,6 +147,27 @@ fun ScannerScreen(
                 .padding(top = 152.dp)
         )
 
+        // Confirme que la lecture a réussi grâce à l'inversion : sans ce
+        // repère, impossible de savoir si le correctif « emballage noir »
+        // sert réellement sur une boîte donnée.
+        AnimatedVisibility(
+            visible = state.invertedDecode,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 190.dp)
+        ) {
+            Surface(color = Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50)) {
+                Text(
+                    "code inversé (emballage sombre)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = StatusSuccess,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+
         BottomPanel(
             state = state,
             onManualEntry = onManualEntry,

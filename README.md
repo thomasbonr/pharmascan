@@ -62,6 +62,8 @@ ministère de la Santé (mise à jour deux fois par jour).
 
 **Scan**
 - Détection DataMatrix uniquement (ignore le code-barres EAN voisin)
+- **Codes à polarité inversée** (clair sur fond sombre) sur les emballages
+  noirs : une seconde passe sur l'image inversée est tentée automatiquement
 - Autofocus continu, auto-zoom, tap-to-focus, pinch-to-zoom, torche
 - Confirmation sur deux lectures identiques avant validation
 - Retour haptique + bip distinct pour succès / échec
@@ -404,6 +406,26 @@ phase. Nécessite ML Kit **17.3.0** minimum.
 Seul chemin qui déclenche une mise au point explicite, sur action de
 l'utilisateur. Auto-annulation à 2 s pour revenir vite en AF continu.
 
+### Emballages noirs : les codes à polarité inversée
+
+Un DataMatrix pharmaceutique est normalement imprimé **sombre sur fond
+clair**. Sur un emballage noir, il est imprimé **clair sur fond sombre** —
+et ML Kit ne le décode pas : ses binariseurs supposent la polarité standard.
+Le code est pourtant parfaitement net et parfaitement au point, ce qui rend
+le symptôme déroutant : la mise au point est bonne, le cadrage est bon, et
+rien ne se passe.
+
+L'appli tente donc une **seconde passe sur l'image inversée** (255 −
+luminance) lorsque la lecture normale ne donne rien depuis 600 ms. Seul le
+plan de luminance est recopié — la chrominance est remplie de 128, ce qui
+suffit à un lecteur de code et évite une conversion couleur complète. Les
+tampons sont réutilisés d'une image à l'autre, et rien n'est alloué tant que
+la lecture normale fonctionne : le cas courant ne paie pas ce correctif.
+
+Quand un code n'est lu que grâce à l'inversion, le badge **« code inversé
+(emballage sombre) »** s'affiche. Sans ce repère, impossible de savoir si le
+correctif a servi ou si la boîte aurait été lue de toute façon.
+
 ### Diagnostiquer quand ça coince
 
 **Réglages → Mise au point → Diagnostic autofocus** affiche en direct
@@ -616,6 +638,7 @@ Le fichier `MainActivity.kt` porte un avertissement explicite à cet endroit.
 | Réticule orange en continu | Auto-zoom au max, code trop petit | Rapprocher, allumer la torche |
 | « Clé de contrôle GTIN invalide » | Lecture partielle | Nettoyer la boîte, meilleure lumière |
 | « Code lu mais inexploitable » | Pas un DataMatrix pharma (EAN, QR promo) | Viser le bon carré, ou saisie manuelle |
+| Rien ne se scanne sur un emballage **noir**, alors que l'image est nette | Code à polarité inversée (clair sur fond sombre) | Géré automatiquement depuis la v1.6 — laisser ~1 s à l'appli, le badge « code inversé » confirme |
 | Nom générique « Médicament CIP … » | API tierce indisponible | Sans gravité, le CIP13 est en description |
 | File qui monte | HA injoignable | Vérifier VPN/réseau, bouton Réessayer |
 | Erreur 401 | Jeton invalide (mode jeton) | En régénérer un dans HA, ou passer au webhook (§4.3) |

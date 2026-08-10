@@ -29,6 +29,9 @@ class ScanUiState {
     /** Vrai quand ML Kit voit un code mais n'arrive pas encore à le décoder. */
     var lockingOn by mutableStateOf(false)
 
+    /** Vrai quand le dernier décodage a nécessité l'inversion (emballage sombre). */
+    var invertedDecode by mutableStateOf(false)
+
     var torchOn by mutableStateOf(false)
     var zoomRatio by mutableStateOf(1f)
     var flashHint by mutableStateOf(false)

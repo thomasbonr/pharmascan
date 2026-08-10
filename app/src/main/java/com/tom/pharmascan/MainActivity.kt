@@ -12,6 +12,7 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.media.AudioManager
+import android.media.Image
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -156,6 +157,10 @@ class MainActivity : ComponentActivity() {
     @Volatile private var lensFocusDistance: Float? = null
     private var lastAfRecovery = 0L
     private var activeCameraLabel = "?"
+    private var lastInvertedTimestamp = 0L
+    /** Tampons réutilisés pour l'inversion, pour ne pas allouer à chaque image. */
+    private var invertedFrame: ByteArray? = null
+    private var invertedRow: ByteArray? = null
     /** Réglage d'objectif utilisé lors du dernier binding, pour détecter un changement. */
     private var boundWithMacroLens = false
 
@@ -504,13 +509,89 @@ class MainActivity : ComponentActivity() {
             imageProxy.close()
             return
         }
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        val rotation = imageProxy.imageInfo.rotationDegrees
+
+        // Seconde chance pour les codes à polarité inversée (clair sur fond
+        // sombre), fréquents sur les emballages noirs. Préparée uniquement
+        // quand la lecture normale peine depuis un moment : recopier le plan
+        // de luminance à chaque image coûterait cher pour rien dans le cas
+        // courant. Doit être construite AVANT la fermeture de l'ImageProxy.
+        val invertedImage =
+            if (System.currentTimeMillis() - lastDecodeTimestamp > INVERT_AFTER_MS) {
+                buildInvertedImage(mediaImage, rotation)
+            } else {
+                null
+            }
+
+        val image = InputImage.fromMediaImage(mediaImage, rotation)
         currentScanner.process(image)
             .addOnSuccessListener { barcodes ->
-                barcodes.firstNotNullOfOrNull { it.rawValue }?.let { onRawValue(it) }
+                val raw = barcodes.firstNotNullOfOrNull { it.rawValue }
+                if (raw != null) {
+                    onRawValue(raw, inverted = false)
+                } else if (invertedImage != null) {
+                    // L'image inversée est une copie indépendante : elle reste
+                    // valide après la fermeture de l'ImageProxy.
+                    currentScanner.process(invertedImage)
+                        .addOnSuccessListener { inv ->
+                            inv.firstNotNullOfOrNull { it.rawValue }
+                                ?.let { onRawValue(it, inverted = true) }
+                        }
+                        .addOnFailureListener { e -> Log.w(TAG, "Analyse inversée échouée", e) }
+                }
             }
             .addOnFailureListener { e -> Log.w(TAG, "Analyse échouée", e) }
             .addOnCompleteListener { imageProxy.close() }
+    }
+
+    /**
+     * Construit une image en niveaux de gris inversée (255 - luminance) à
+     * partir du plan Y de la frame.
+     *
+     * Un DataMatrix pharmaceutique est normalement imprimé sombre sur fond
+     * clair. Sur les emballages noirs il est imprimé en clair sur fond
+     * sombre : le code est parfaitement net, mais ML Kit ne le décode pas,
+     * ses binariseurs supposant la polarité standard. Lui fournir la version
+     * inversée résout le cas sans rien changer au reste du pipeline.
+     *
+     * Seul le plan de luminance porte l'information utile à un lecteur de
+     * code : la chrominance est donc remplie de 128 (neutre), ce qui produit
+     * une image NV21 valide en niveaux de gris.
+     */
+    private fun buildInvertedImage(mediaImage: Image, rotation: Int): InputImage? {
+        return try {
+            val plane = mediaImage.planes[0]
+            val width = mediaImage.width
+            val height = mediaImage.height
+            val rowStride = plane.rowStride
+            val pixelStride = plane.pixelStride
+            val luma = plane.buffer
+
+            val ySize = width * height
+            val needed = ySize + ySize / 2
+            val out = invertedFrame?.takeIf { it.size == needed }
+                ?: ByteArray(needed).also { invertedFrame = it }
+            val row = invertedRow?.takeIf { it.size >= rowStride }
+                ?: ByteArray(rowStride).also { invertedRow = it }
+
+            var offset = 0
+            for (y in 0 until height) {
+                // Cast explicite : ByteBuffer.position(int) a un type de
+                // retour covariant depuis Java 9, ce qui rend l'appel
+                // ambigu à la compilation selon le JDK utilisé.
+                (luma as java.nio.Buffer).position(y * rowStride)
+                luma.get(row, 0, minOf(rowStride, luma.remaining()))
+                for (x in 0 until width) {
+                    out[offset++] = (255 - (row[x * pixelStride].toInt() and 0xFF)).toByte()
+                }
+            }
+            java.util.Arrays.fill(out, ySize, needed, NEUTRAL_CHROMA)
+
+            InputImage.fromByteArray(out, width, height, rotation, InputImage.IMAGE_FORMAT_NV21)
+        } catch (e: Exception) {
+            Log.w(TAG, "Inversion de l'image impossible", e)
+            null
+        }
     }
 
     /**
@@ -518,8 +599,12 @@ class MainActivity : ComponentActivity() {
      * résultat différent d'une frame à l'autre. On exige deux lectures
      * identiques consécutives avant de valider.
      */
-    private fun onRawValue(raw: String) {
+    private fun onRawValue(raw: String, inverted: Boolean) {
         lastDecodeTimestamp = System.currentTimeMillis()
+        if (inverted) {
+            lastInvertedTimestamp = lastDecodeTimestamp
+            mainHandler.post { state.invertedDecode = true }
+        }
         if (raw == lastRawValue) consecutiveCount++ else {
             lastRawValue = raw
             consecutiveCount = 1
@@ -550,6 +635,9 @@ class MainActivity : ComponentActivity() {
             val now = System.currentTimeMillis()
             if (state.lockingOn && now - lastLockOnTimestamp > 1500) {
                 state.lockingOn = false
+            }
+            if (state.invertedDecode && now - lastInvertedTimestamp > INVERTED_BADGE_MS) {
+                state.invertedDecode = false
             }
 
             val locked = afState == CameraMetadata.CONTROL_AF_STATE_FOCUSED_LOCKED ||
@@ -878,5 +966,15 @@ class MainActivity : ComponentActivity() {
         private const val AF_STUCK_THRESHOLD_MS = 1500L
         /** Espacement minimal entre deux retours forcés à l'AF continu. */
         private const val AF_RECOVERY_INTERVAL_MS = 2500L
+        /**
+         * Délai sans décodage avant de tenter aussi la lecture inversée.
+         * Court, pour ne pas faire attendre sur un emballage noir, mais non
+         * nul : dans le cas courant on n'alloue et ne recopie rien.
+         */
+        private const val INVERT_AFTER_MS = 600L
+        /** Durée d'affichage du badge « code inversé ». */
+        private const val INVERTED_BADGE_MS = 2500L
+        /** Chrominance neutre d'une image NV21 en niveaux de gris. */
+        private const val NEUTRAL_CHROMA: Byte = 128.toByte()
     }
 }
