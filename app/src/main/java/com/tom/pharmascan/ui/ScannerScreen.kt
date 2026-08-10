@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AssistChip
@@ -89,6 +90,7 @@ fun ScannerScreen(
     onToggleTorch: () -> Unit,
     onManualEntry: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit,
     onRetryQueue: () -> Unit
 ) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -120,6 +122,7 @@ fun ScannerScreen(
             state = state,
             onToggleTorch = onToggleTorch,
             onOpenSettings = onOpenSettings,
+            onOpenHistory = onOpenHistory,
             onRetryQueue = onRetryQueue,
             modifier = Modifier.align(Alignment.TopCenter)
         )
@@ -253,6 +256,7 @@ private fun TopBar(
     state: ScanUiState,
     onToggleTorch: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit,
     onRetryQueue: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -292,6 +296,12 @@ private fun TopBar(
             active = state.torchOn,
             contentDescription = "Torche",
             onClick = onToggleTorch
+        )
+        Spacer(Modifier.width(6.dp))
+        GlassIconButton(
+            icon = Icons.Default.History,
+            contentDescription = "Historique",
+            onClick = onOpenHistory
         )
         Spacer(Modifier.width(6.dp))
         GlassIconButton(

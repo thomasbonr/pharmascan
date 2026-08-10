@@ -83,6 +83,10 @@ ministère de la Santé (mise à jour deux fois par jour).
 - Bouton « Tester la connexion » qui distingue les trois erreurs classiques
 - Déduplication : rescanner la même boîte ne crée pas de doublon
 - Saisie manuelle du CIP13 quand le code est abîmé
+- **Dossier des boîtes déjà scannées** (icône historique, en haut de
+  l'écran de scan) : liste persistée sur disque, consultable et cherchable
+  par nom ou CIP13 à tout moment — distinct de l'historique de session
+  affiché sous le réticule, qui lui est effacé à la fermeture de l'appli
 
 **Sécurité**
 - Token HA chiffré via le Keystore Android (`EncryptedSharedPreferences`)
@@ -117,6 +121,7 @@ PharmaScan/
         └── java/com/tom/pharmascan/
             ├── MainActivity.kt          caméra, focus, orchestration
             ├── SettingsActivity.kt      écran de réglages
+            ├── HistoryActivity.kt       dossier des boîtes déjà scannées
             ├── Gs1Parser.kt             décodage GS1 (testé, 30/30)
             ├── MedicamentApi.kt         CIP13 → nom du médicament
             ├── HomeAssistant.kt         envoi + file d'attente
@@ -232,32 +237,49 @@ Avec la résolution d'analyse par défaut de CameraX (640×480) et un
 téléphone tenu à bout de bras, le code occupe 30 à 40 pixels. Flou par
 dessus. Le scan ne marche jamais, et on ne comprend pas pourquoi.
 
-### Les cinq mesures appliquées
+### Les six mesures appliquées
 
-**1. Résolution d'analyse relevée à 1920×1080**
-`setTargetResolution(Size(1920, 1080))` sur l'`ImageAnalysis`. C'est le
-levier le plus brutal et le plus efficace. Coût : quelques fps d'analyse en
+**1. Choix du capteur arrière** *(souvent la cause principale d'un AF qui n'accroche jamais)*
+Sur un téléphone à plusieurs caméras arrière, `CameraSelector.DEFAULT_BACK_CAMERA`
+pointe presque toujours vers le capteur principal, dont la distance de mise
+au point minimale (10-15 cm sur beaucoup d'appareils) est **supérieure** à
+la distance de scan visée (8-12 cm) : l'autofocus hunte en continu et
+n'accroche jamais, ce qui se ressent comme un AF simplement défaillant.
+L'appli interroge `CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE`
+de chaque capteur arrière disponible et sélectionne automatiquement celui
+qui fait le point le plus près (souvent l'ultra grand-angle), au lieu du
+premier de la liste. Voir `MainActivity.pickBestBackCameraSelector()`.
+
+**2. Résolution d'analyse relevée à 1920×1080**
+`setTargetResolution(Size(1920, 1080))` sur l'`ImageAnalysis`. Levier
+efficace une fois le bon capteur choisi. Coût : quelques fps d'analyse en
 moins, sans conséquence ici.
 
-**2. Autofocus continu forcé via Camera2Interop**
+**3. Autofocus continu forcé via Camera2Interop**
 Beaucoup de téléphones utilisent par défaut un AF paresseux qui ne
 re-converge pas quand on approche l'objet. On force explicitement
 `CONTROL_AF_MODE_CONTINUOUS_PICTURE` sur la requête de capture.
 
-**3. Auto-zoom ML Kit** *(le plus efficace)*
+**4. Auto-zoom ML Kit** *(optionnel — Réglages → Zoom automatique)*
 `ZoomSuggestionOptions` : quand ML Kit repère un code présent mais trop
 petit pour être décodé, il calcule lui-même le facteur de zoom nécessaire
-et nous le demande via un callback. L'appli applique le zoom, et le code
-devient lisible sans que l'utilisateur bouge. Le réticule passe à l'orange
-pendant cette phase, pour signaler « je te vois, je zoome ».
+et nous le demande via un callback. Utile si le code est scanné trop loin ;
+**ça ne corrige pas un problème de mise au point** (mesure 1), seulement un
+cadrage trop petit — désactivable dans les réglages si le changement de
+zoom perturbe plus qu'il n'aide sur un appareil donné. Le réticule passe à
+l'orange pendant cette phase, pour signaler « je te vois, je zoome ».
 Nécessite ML Kit **17.3.0** minimum.
 
-**4. Relance périodique de l'AF**
-Si rien n'est décodé pendant 2 secondes, on redéclenche une mise au point au
-centre. Sans ça, le capteur reste parfois verrouillé sur l'arrière-plan
-pendant qu'on approche la boîte, et ne re-converge jamais.
+**5. Relance périodique de l'AF**
+Si rien n'est décodé pendant 2 secondes, on redéclenche une mise au point
+sur une zone large (~60 % du cadre, alignée sur le réticule) plutôt qu'un
+point central étroit, et **en AF seul** — sans re-mesurer l'exposition à
+chaque relance, ce qui produisait un scintillement de luminosité
+perceptible pendant la visée. Sans cette relance, le capteur reste parfois
+verrouillé sur l'arrière-plan pendant qu'on approche la boîte, et ne
+re-converge jamais.
 
-**5. Tap-to-focus et pinch-to-zoom**
+**6. Tap-to-focus et pinch-to-zoom**
 Reprise en main manuelle immédiate. La mise au point manuelle s'auto-annule
 au bout de 3 secondes pour repasser en AF continu, sinon la caméra reste
 bloquée sur un plan devenu obsolète.
@@ -275,12 +297,13 @@ clé de contrôle GTIN, un faux positif est très improbable.
 - **Torche** : les DataMatrix sont souvent imprimés en gris pâle sur carton
   blanc, le contraste est mauvais en lumière ambiante.
 - **Ne pas coller la boîte** : sous ~7 cm, la plupart des capteurs
-  n'arrivent plus à faire le point du tout.
-- Sur un téléphone récent avec plusieurs capteurs arrière, le grand-angle
-  a parfois une distance minimale de mise au point bien meilleure. CameraX
-  choisit le capteur par défaut ; on peut forcer un autre `CameraSelector`
-  si besoin.
+  n'arrivent plus à faire le point du tout — y compris le capteur
+  automatiquement sélectionné pour son focus rapproché (mesure 1).
 - Monter `REQUIRED_CONSECUTIVE_READS` à 3 si des lectures erronées passent.
+- Si l'AF reste mauvais malgré tout sur un appareil donné, vérifier dans
+  `adb logcat -s PharmaScan` la ligne `Capteur retenu : id=...` au
+  lancement : elle indique la distance de mise au point minimale mesurée
+  pour le capteur choisi, utile pour comprendre si le matériel est en cause.
 
 ---
 
@@ -359,8 +382,9 @@ avant de les coller dans une automatisation.
 | `Gs1Parser.kt` | Décodage GS1 | Table des AI, checksum GTIN, dates fin de mois — 30 tests |
 | `MedicamentApi.kt` | CIP13 → nom | Échoue en silence par conception, cache local |
 | `HomeAssistant.kt` | Envoi + file d'attente | Distingue erreurs temporaires et définitives |
-| `Prefs.kt` | Réglages chiffrés | Repli non chiffré si Keystore HS |
+| `Prefs.kt` | Réglages chiffrés | Repli non chiffré si Keystore HS ; stocke aussi le dossier consultable des scans (JSON, non chiffré, non sensible) |
 | `SettingsActivity.kt` | Écran de config | Test de connexion diagnostique |
+| `HistoryActivity.kt` | Dossier des scans | Persisté sur disque, recherche par nom/CIP13, ne relit pas l'état réel de HA |
 | `ui/Theme.kt` | Palette Material 3 | Sombre forcé sur l'écran de scan |
 | `ui/ScanUiState.kt` | État observable | Simple `mutableStateOf`, pas de ViewModel |
 | `ui/ScannerScreen.kt` | Écran de scan | Réticule animé, historique, badges |

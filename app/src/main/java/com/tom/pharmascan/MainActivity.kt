@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -21,9 +23,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
+import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
@@ -65,17 +69,31 @@ import java.util.concurrent.TimeUnit
  * le code. En résolution d'analyse par défaut (640x480) et à bout de bras,
  * on en obtient 30 à 40, flous : le scan ne marche jamais.
  *
- * Cinq mesures combinées :
+ * Six mesures combinées :
  *
- *  1. RÉSOLUTION D'ANALYSE relevée à 1920x1080 via ResolutionSelector.
- *  2. AUTOFOCUS CONTINU forcé (Camera2Interop, CONTROL_AF_MODE_CONTINUOUS_
+ *  1. CHOIX DU CAPTEUR : sur un téléphone à plusieurs caméras arrière,
+ *     CameraSelector.DEFAULT_BACK_CAMERA pointe presque toujours vers le
+ *     capteur principal, dont la distance de mise au point minimale (10-15 cm
+ *     sur beaucoup d'appareils) est SUPÉRIEURE à la distance de scan visée
+ *     (8-12 cm) : l'AF hunte en continu et n'accroche jamais, ce qui se
+ *     ressent comme un autofocus "pourri". On interroge donc
+ *     CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE de chaque
+ *     capteur arrière et on sélectionne celui qui fait le point le plus
+ *     près (souvent l'ultra grand-angle), pas le premier de la liste.
+ *  2. RÉSOLUTION D'ANALYSE relevée à 1920x1080 via ResolutionSelector.
+ *  3. AUTOFOCUS CONTINU forcé (Camera2Interop, CONTROL_AF_MODE_CONTINUOUS_
  *     PICTURE) : beaucoup d'appareils utilisent sinon un AF paresseux qui ne
  *     re-converge pas quand on approche l'objet.
- *  3. AUTO-ZOOM ML KIT (ZoomSuggestionOptions) : quand un code est repéré
- *     mais illisible, la bibliothèque calcule elle-même le facteur de zoom
- *     nécessaire et nous le demande. C'est le mécanisme le plus efficace.
- *  4. RELANCE PÉRIODIQUE DE L'AF si rien n'est décodé pendant 2 s.
- *  5. TAP-TO-FOCUS et PINCH-TO-ZOOM, avec auto-annulation à 3 s pour
+ *  4. AUTO-ZOOM ML KIT (ZoomSuggestionOptions), désactivable dans les
+ *     réglages : quand un code est repéré mais illisible, la bibliothèque
+ *     calcule elle-même le facteur de zoom nécessaire et nous le demande.
+ *     Utile si on scanne trop loin ; sans effet sur la mise au point.
+ *  5. RELANCE PÉRIODIQUE DE L'AF si rien n'est décodé pendant 2 s, sur une
+ *     zone de mesure large (~60 % du cadre, alignée sur le réticule) plutôt
+ *     qu'un point central étroit, et en AF seul (sans re-mesurer
+ *     l'exposition à chaque relance, ce qui produisait un scintillement
+ *     perceptible).
+ *  6. TAP-TO-FOCUS et PINCH-TO-ZOOM, avec auto-annulation à 3 s pour
  *     repasser en AF continu.
  *
  * S'y ajoute la CONFIRMATION MULTI-FRAMES recommandée par Google : deux
@@ -177,6 +195,9 @@ class MainActivity : ComponentActivity() {
                     onOpenSettings = {
                         startActivity(Intent(this, SettingsActivity::class.java))
                     },
+                    onOpenHistory = {
+                        startActivity(Intent(this, HistoryActivity::class.java))
+                    },
                     onRetryQueue = { flushQueue(announceEmpty = true) }
                 )
 
@@ -205,6 +226,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshQueueBadge()
         flushQueue(announceEmpty = false)
+        // Reconstruit le scanner (pas la caméra) pour prendre en compte un
+        // changement du réglage "zoom automatique" fait dans SettingsActivity.
+        if (camera != null) {
+            scanner?.close()
+            scanner = buildScanner()
+        }
     }
 
     override fun onDestroy() {
@@ -265,7 +292,7 @@ class MainActivity : ComponentActivity() {
             try {
                 provider.unbindAll()
                 camera = provider.bindToLifecycle(
-                    this, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis
+                    this, pickBestBackCameraSelector(provider), preview, analysis
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Binding caméra échoué", e)
@@ -288,31 +315,91 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Parmi les capteurs arrière disponibles, retient celui dont la distance
+     * de mise au point minimale est la plus courte (voir §1 de la stratégie
+     * de focus ci-dessus). CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_
+     * DISTANCE est exprimée en dioptries (1/mètre) : plus la valeur est
+     * grande, plus le capteur peut faire le point près. 0 = mise au point
+     * fixe, écarté puisqu'inutilisable pour un AF continu de près.
+     *
+     * REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE exclut les capteurs
+     * spécialisés (profondeur, mono...) qui ne produisent pas une preview
+     * exploitable seuls.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun pickBestBackCameraSelector(provider: ProcessCameraProvider): CameraSelector {
+        val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val backCameraInfos: List<CameraInfo> = try {
+            CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos)
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        var bestId: String? = null
+        var bestMinFocusDistance = 0f
+
+        for (info in backCameraInfos) {
+            val id = Camera2CameraInfo.from(info).cameraId
+            try {
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val capabilities =
+                    chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: intArrayOf()
+                val backwardCompatible = capabilities.contains(
+                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE
+                )
+                val minFocusDistance =
+                    chars.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+                if (backwardCompatible && minFocusDistance > bestMinFocusDistance) {
+                    bestMinFocusDistance = minFocusDistance
+                    bestId = id
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Caractéristiques caméra $id illisibles", e)
+            }
+        }
+
+        val chosenId = bestId ?: return CameraSelector.DEFAULT_BACK_CAMERA
+        Log.i(
+            TAG,
+            "Capteur retenu : id=$chosenId, distance mini ~${(1000f / bestMinFocusDistance).toInt()} mm"
+        )
+        return CameraSelector.Builder()
+            .addCameraFilter { infos -> infos.filter { Camera2CameraInfo.from(it).cameraId == chosenId } }
+            .build()
+    }
+
+    /**
      * Scanner restreint au seul format DATA_MATRIX : cela accélère nettement
      * la détection et supprime les faux positifs sur le code-barres EAN
      * imprimé juste à côté sur la boîte.
+     *
+     * Le zoom automatique est optionnel (réglage utilisateur) : il ne
+     * corrige pas un problème de mise au point, seulement un code trop petit
+     * dans le cadre, et certains préfèrent le désactiver.
      */
     private fun buildScanner(): BarcodeScanner {
-        val zoomCallback = ZoomSuggestionOptions.ZoomCallback { ratio ->
-            val cam = camera ?: return@ZoomCallback false
-            cam.cameraControl.setZoomRatio(ratio.coerceIn(1f, maxZoomRatio))
-            lastLockOnTimestamp = System.currentTimeMillis()
-            mainHandler.post {
-                state.lockingOn = true
-                state.zoomRatio = ratio
-            }
-            true
-        }
-
-        val options = BarcodeScannerOptions.Builder()
+        val builder = BarcodeScannerOptions.Builder()
             .setBarcodeFormats(Barcode.FORMAT_DATA_MATRIX)
-            .setZoomSuggestionOptions(
+
+        if (prefs.autoZoomEnabled) {
+            val zoomCallback = ZoomSuggestionOptions.ZoomCallback { ratio ->
+                val cam = camera ?: return@ZoomCallback false
+                cam.cameraControl.setZoomRatio(ratio.coerceIn(1f, maxZoomRatio))
+                lastLockOnTimestamp = System.currentTimeMillis()
+                mainHandler.post {
+                    state.lockingOn = true
+                    state.zoomRatio = ratio
+                }
+                true
+            }
+            builder.setZoomSuggestionOptions(
                 ZoomSuggestionOptions.Builder(zoomCallback)
                     .setMaxSupportedZoomRatio(maxZoomRatio.coerceAtLeast(1f))
                     .build()
             )
-            .build()
-        return BarcodeScanning.getClient(options)
+        }
+
+        return BarcodeScanning.getClient(builder.build())
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {
@@ -364,20 +451,37 @@ class MainActivity : ComponentActivity() {
                 state.lockingOn = false
             }
             if (!processing && now - lastDecodeTimestamp > 2000) {
-                previewView?.let { focusAt(it.width / 2f, it.height / 2f) }
+                previewView?.let {
+                    // Zone large (proche du réticule à 64 % du cadre) plutôt
+                    // qu'un point central étroit : la boîte n'est pas toujours
+                    // parfaitement centrée au pixel près, et une zone étroite
+                    // fait hunter l'AF sur le fond entre deux tentatives.
+                    // AF seul (sans AE) : re-mesurer l'exposition à chaque
+                    // relance produisait un scintillement de luminosité
+                    // perceptible pendant la visée.
+                    focusAt(it.width / 2f, it.height / 2f, size = REFOCUS_REGION_SIZE, includeAe = false)
+                }
             }
             mainHandler.postDelayed(this, 1200)
         }
     }
 
-    private fun focusAt(x: Float, y: Float) {
+    private fun focusAt(
+        x: Float,
+        y: Float,
+        size: Float = DEFAULT_METERING_POINT_SIZE,
+        includeAe: Boolean = true
+    ) {
         val cam = camera ?: return
         val view = previewView ?: return
         try {
-            val point = view.meteringPointFactory.createPoint(x, y)
-            val action = FocusMeteringAction.Builder(
-                point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
-            )
+            val point = view.meteringPointFactory.createPoint(x, y, size)
+            val flags = if (includeAe) {
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+            } else {
+                FocusMeteringAction.FLAG_AF
+            }
+            val action = FocusMeteringAction.Builder(point, flags)
                 // Auto-annulation : sans elle, la caméra reste verrouillée sur
                 // un plan devenu obsolète.
                 .setAutoCancelDuration(3, TimeUnit.SECONDS)
@@ -409,6 +513,19 @@ class MainActivity : ComponentActivity() {
     // ======================================================================
     // Traitement d'un scan
     // ======================================================================
+
+    /** Alimente le dossier consultable des boîtes déjà scannées (HistoryActivity). */
+    private fun recordHistory(cip13: String, name: String, lot: String?, expiryIso: String?) {
+        prefs.addHistoryEntry(
+            Prefs.HistoryEntry(
+                cip13 = cip13,
+                name = name,
+                lot = lot,
+                expiryIso = expiryIso,
+                scannedAt = System.currentTimeMillis()
+            )
+        )
+    }
 
     private fun handleScan(raw: String) {
         val data = Gs1Parser.parse(raw)
@@ -467,6 +584,7 @@ class MainActivity : ComponentActivity() {
                 val entryStatus = when (result) {
                     is HomeAssistant.SendResult.Success -> {
                         prefs.rememberScanned(boxKey)
+                        recordHistory(cip13, name, data.lot, data.expiryIso)
                         state.set(
                             ScanUiState.Phase.SUCCESS, name,
                             data.expiryIso?.let { "Périme le ${frenchDate(it)}" }
@@ -475,6 +593,7 @@ class MainActivity : ComponentActivity() {
                     }
                     is HomeAssistant.SendResult.Queued -> {
                         prefs.rememberScanned(boxKey)
+                        recordHistory(cip13, name, data.lot, data.expiryIso)
                         state.set(
                             ScanUiState.Phase.SUCCESS, name,
                             "Hors ligne — en file (${result.queueSize}), envoi automatique plus tard"
@@ -524,10 +643,12 @@ class MainActivity : ComponentActivity() {
             mainHandler.post {
                 val entryStatus = when (result) {
                     is HomeAssistant.SendResult.Success -> {
+                        recordHistory(cip13, name, lot = null, expiryIso)
                         state.set(ScanUiState.Phase.SUCCESS, name, "Ajouté à Home Assistant")
                         ScanUiState.EntryStatus.SENT
                     }
                     is HomeAssistant.SendResult.Queued -> {
+                        recordHistory(cip13, name, lot = null, expiryIso)
                         state.set(ScanUiState.Phase.SUCCESS, name, "En file (${result.queueSize})")
                         ScanUiState.EntryStatus.QUEUED
                     }
@@ -622,5 +743,9 @@ class MainActivity : ComponentActivity() {
         private const val REQUIRED_CONSECUTIVE_READS = 2
         /** Pause après un scan traité, pour éviter de relire la même boîte. */
         private const val RESCAN_COOLDOWN_MS = 1600L
+        /** Taille par défaut d'un point de mesure CameraX (fraction du cadre). */
+        private const val DEFAULT_METERING_POINT_SIZE = 0.15f
+        /** Zone de la relance AF périodique : proche des 64 % du réticule. */
+        private const val REFOCUS_REGION_SIZE = 0.6f
     }
 }

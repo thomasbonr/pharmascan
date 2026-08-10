@@ -5,6 +5,8 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Réglages persistés. Le token Home Assistant est un secret de longue durée :
@@ -62,6 +64,16 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_SOUND, true)
         set(v) = prefs.edit().putBoolean(KEY_SOUND, v).apply()
 
+    /**
+     * Zoom automatique ML Kit (ZoomSuggestionOptions). Utile quand le code
+     * est détecté mais trop petit dans le cadre ; sans effet sur la mise au
+     * point elle-même — désactivable si le changement de zoom perturbe plus
+     * qu'il n'aide sur un appareil donné.
+     */
+    var autoZoomEnabled: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_ZOOM, true)
+        set(v) = prefs.edit().putBoolean(KEY_AUTO_ZOOM, v).apply()
+
     val isConfigured: Boolean
         get() = haUrl.isNotBlank() && haToken.isNotBlank() && todoEntity.isNotBlank()
 
@@ -93,6 +105,63 @@ class Prefs(context: Context) {
     fun cacheName(cip13: String, name: String) =
         cache.edit().putString("name_$cip13", name).apply()
 
+    // ---- Historique consultable (dossier des boîtes déjà scannées) -------
+
+    data class HistoryEntry(
+        val cip13: String,
+        val name: String,
+        val lot: String?,
+        val expiryIso: String?,
+        val scannedAt: Long
+    )
+
+    /**
+     * Distinct de [isAlreadyScanned] : ceci est la liste lisible affichée à
+     * l'écran Historique, pas la déduplication (qui ne stocke qu'une clé
+     * opaque). Le plus récent en tête. Bornée à 500 entrées.
+     */
+    fun addHistoryEntry(entry: HistoryEntry) {
+        val current = historyEntries().toMutableList()
+        current.add(0, entry)
+        saveHistoryEntries(if (current.size > 500) current.take(500) else current)
+    }
+
+    fun historyEntries(): List<HistoryEntry> {
+        val raw = cache.getString(KEY_HISTORY, "[]") ?: "[]"
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                HistoryEntry(
+                    cip13 = o.getString("cip13"),
+                    name = o.getString("name"),
+                    lot = o.optString("lot").ifBlank { null },
+                    expiryIso = o.optString("expiry").ifBlank { null },
+                    scannedAt = o.optLong("scannedAt")
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Historique illisible, remis à zéro", e)
+            emptyList()
+        }
+    }
+
+    fun clearHistoryEntries() = cache.edit().remove(KEY_HISTORY).apply()
+
+    private fun saveHistoryEntries(entries: List<HistoryEntry>) {
+        val arr = JSONArray()
+        entries.forEach { e ->
+            arr.put(JSONObject().apply {
+                put("cip13", e.cip13)
+                put("name", e.name)
+                put("lot", e.lot ?: "")
+                put("expiry", e.expiryIso ?: "")
+                put("scannedAt", e.scannedAt)
+            })
+        }
+        cache.edit().putString(KEY_HISTORY, arr.toString()).apply()
+    }
+
     companion object {
         private const val TAG = "PharmaScan/Prefs"
         private const val KEY_URL = "ha_url"
@@ -100,7 +169,9 @@ class Prefs(context: Context) {
         private const val KEY_ENTITY = "todo_entity"
         private const val KEY_ALERT_MONTHS = "alert_months"
         private const val KEY_SOUND = "sound_enabled"
+        private const val KEY_AUTO_ZOOM = "auto_zoom_enabled"
         private const val KEY_QUEUE = "pending_queue"
         private const val KEY_SCANNED = "scanned_keys"
+        private const val KEY_HISTORY = "history_entries"
     }
 }

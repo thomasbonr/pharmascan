@@ -84,11 +84,13 @@ class SettingsActivity : ComponentActivity() {
                     initialToken = prefs.haToken,
                     initialEntity = prefs.todoEntity,
                     initialSound = prefs.soundEnabled,
-                    onSave = { url, token, entity, sound ->
+                    initialAutoZoom = prefs.autoZoomEnabled,
+                    onSave = { url, token, entity, sound, autoZoom ->
                         prefs.haUrl = url
                         prefs.haToken = token
                         prefs.todoEntity = entity
                         prefs.soundEnabled = sound
+                        prefs.autoZoomEnabled = autoZoom
                     },
                     onTest = { callback ->
                         executor.execute {
@@ -116,7 +118,8 @@ private fun SettingsScreen(
     initialToken: String,
     initialEntity: String,
     initialSound: Boolean,
-    onSave: (String, String, String, Boolean) -> Unit,
+    initialAutoZoom: Boolean,
+    onSave: (String, String, String, Boolean, Boolean) -> Unit,
     onTest: ((String) -> Unit) -> Unit,
     onClearHistory: () -> Unit,
     onBack: () -> Unit
@@ -125,6 +128,7 @@ private fun SettingsScreen(
     var token by remember { mutableStateOf(initialToken) }
     var entity by remember { mutableStateOf(initialEntity) }
     var sound by remember { mutableStateOf(initialSound) }
+    var autoZoom by remember { mutableStateOf(initialAutoZoom) }
     var tokenVisible by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
@@ -136,7 +140,7 @@ private fun SettingsScreen(
                 title = { Text("Réglages") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        onSave(url, token, entity, sound)
+                        onSave(url, token, entity, sound, autoZoom)
                         onBack()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
@@ -214,7 +218,7 @@ private fun SettingsScreen(
                     onClick = {
                         // On enregistre d'abord, sinon on testerait les
                         // anciennes valeurs.
-                        onSave(url, token, entity, sound)
+                        onSave(url, token, entity, sound, autoZoom)
                         testing = true
                         testResult = null
                         onTest { message ->
@@ -259,6 +263,25 @@ private fun SettingsScreen(
                 Switch(checked = sound, onCheckedChange = { sound = it })
             }
 
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Zoom automatique", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Zoome quand un code est repéré mais trop petit dans le cadre. " +
+                            "Ne corrige pas un problème de mise au point : désactive-le si le " +
+                            "cadrage saute sans que ça aide à scanner.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = autoZoom, onCheckedChange = { autoZoom = it })
+            }
+
             Spacer(Modifier.height(24.dp))
             SectionTitle("Maintenance")
 
@@ -280,7 +303,7 @@ private fun SettingsScreen(
             Spacer(Modifier.height(28.dp))
 
             Button(
-                onClick = { onSave(url, token, entity, sound); onBack() },
+                onClick = { onSave(url, token, entity, sound, autoZoom); onBack() },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Enregistrer et revenir au scan") }
 
