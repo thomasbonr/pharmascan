@@ -9,14 +9,34 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Réglages persistés. Le token Home Assistant est un secret de longue durée :
- * il est stocké dans EncryptedSharedPreferences (chiffré par une clé du
- * Keystore Android matériel), jamais en dur dans le code ni en clair sur le
- * disque.
+ * Mode de connexion à Home Assistant.
+ *
+ * WEBHOOK est le mode recommandé, et de loin le plus sûr : le secret est un
+ * identifiant d'URL qui ne peut déclencher QU'UNE automatisation précise. Un
+ * secret qui fuite permet, au pire, d'ajouter des lignes dans la liste de
+ * l'armoire à pharmacie.
+ *
+ * TOKEN utilise un jeton longue durée de l'API REST. Home Assistant ne sait
+ * pas restreindre la portée d'un tel jeton : il hérite de TOUS les droits du
+ * compte qui l'a créé (serrures, alarme, caméras, configuration...). L'appli
+ * n'a besoin que d'un seul appel de service, donc c'est disproportionné. Ce
+ * mode reste disponible pour la compatibilité et pour qui ne veut pas créer
+ * d'automatisation, mais il ne devrait pas être le choix par défaut d'une
+ * nouvelle installation.
+ */
+enum class ConnectionMode { TOKEN, WEBHOOK }
+
+/**
+ * Réglages persistés. Les secrets Home Assistant (jeton longue durée ou
+ * identifiant de webhook) sont stockés dans EncryptedSharedPreferences
+ * (chiffré par une clé du Keystore Android matériel), jamais en dur dans le
+ * code ni en clair sur le disque.
  *
  * Si le chiffrement échoue (ROM exotique, Keystore corrompu), on retombe sur
  * des SharedPreferences classiques plutôt que de crasher — mais on log un
- * avertissement, car le token est alors en clair dans /data/data.
+ * avertissement, car le secret est alors en clair dans /data/data. C'est une
+ * raison de plus de préférer le mode webhook : le secret qui peut fuiter y
+ * est beaucoup moins puissant.
  */
 class Prefs(context: Context) {
 
@@ -46,9 +66,33 @@ class Prefs(context: Context) {
         get() = prefs.getString(KEY_URL, "") ?: ""
         set(v) = prefs.edit().putString(KEY_URL, v.trim().trimEnd('/')).apply()
 
+    /**
+     * TOKEN par défaut pour ne pas casser les installations existantes lors
+     * d'une mise à jour. Les nouvelles installations sont orientées vers le
+     * webhook depuis l'écran de réglages.
+     */
+    var connectionMode: ConnectionMode
+        get() = if (prefs.getString(KEY_MODE, MODE_TOKEN) == MODE_WEBHOOK) {
+            ConnectionMode.WEBHOOK
+        } else {
+            ConnectionMode.TOKEN
+        }
+        set(v) = prefs.edit()
+            .putString(KEY_MODE, if (v == ConnectionMode.WEBHOOK) MODE_WEBHOOK else MODE_TOKEN)
+            .apply()
+
     var haToken: String
         get() = prefs.getString(KEY_TOKEN, "") ?: ""
         set(v) = prefs.edit().putString(KEY_TOKEN, v.trim()).apply()
+
+    /**
+     * Identifiant du webhook HA. C'est un secret : qui le connaît peut
+     * déclencher l'automatisation. Il est donc stocké dans le même magasin
+     * chiffré que le jeton — mais sa portée se limite à cette automatisation.
+     */
+    var webhookId: String
+        get() = prefs.getString(KEY_WEBHOOK_ID, "") ?: ""
+        set(v) = prefs.edit().putString(KEY_WEBHOOK_ID, v.trim()).apply()
 
     var todoEntity: String
         get() = prefs.getString(KEY_ENTITY, "todo.armoire_a_pharmacie")
@@ -91,8 +135,17 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_AF_DIAGNOSTICS, false)
         set(v) = prefs.edit().putBoolean(KEY_AF_DIAGNOSTICS, v).apply()
 
+    /**
+     * En mode webhook, l'entité cible est fixée côté Home Assistant dans
+     * l'automatisation : l'appli n'a pas à la connaître, et surtout pas à
+     * pouvoir la choisir (voir HomeAssistant.postViaWebhook).
+     */
     val isConfigured: Boolean
-        get() = haUrl.isNotBlank() && haToken.isNotBlank() && todoEntity.isNotBlank()
+        get() = when (connectionMode) {
+            ConnectionMode.WEBHOOK -> haUrl.isNotBlank() && webhookId.isNotBlank()
+            ConnectionMode.TOKEN ->
+                haUrl.isNotBlank() && haToken.isNotBlank() && todoEntity.isNotBlank()
+        }
 
     // ---- File d'attente hors-ligne --------------------------------------
 
@@ -183,6 +236,10 @@ class Prefs(context: Context) {
         private const val TAG = "PharmaScan/Prefs"
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
+        private const val KEY_MODE = "connection_mode"
+        private const val KEY_WEBHOOK_ID = "webhook_id"
+        private const val MODE_TOKEN = "token"
+        private const val MODE_WEBHOOK = "webhook"
         private const val KEY_ENTITY = "todo_entity"
         private const val KEY_ALERT_MONTHS = "alert_months"
         private const val KEY_SOUND = "sound_enabled"

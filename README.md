@@ -91,7 +91,10 @@ ministère de la Santé (mise à jour deux fois par jour).
   affiché sous le réticule, qui lui est effacé à la fermeture de l'appli
 
 **Sécurité**
-- Token HA chiffré via le Keystore Android (`EncryptedSharedPreferences`)
+- **Connexion par webhook** : le secret ne peut déclencher qu'une seule
+  automatisation, au lieu d'un jeton qui donnerait tous les droits du compte
+  HA (voir §4.2 — c'est le point de conception le plus important du projet)
+- Secret chiffré via le Keystore Android (`EncryptedSharedPreferences`)
 - HTTP en clair autorisé uniquement vers l'adresse locale déclarée
 - Aucune donnée envoyée ailleurs que vers ta propre instance HA
 
@@ -187,22 +190,104 @@ Relever l'`entity_id` généré dans **Outils de développement → États**
 Cette intégration native gère nativement une échéance par item, ce qui
 permet de trier par date de péremption sans intégration custom.
 
-### 4.2 Créer le jeton
+### 4.2 Choisir le mode de connexion
+
+Deux modes existent. Le webhook est **très largement préférable**, et la
+raison tient en une phrase :
+
+> Home Assistant ne sait pas restreindre la portée d'un jeton longue durée.
+> Un tel jeton hérite de **tous** les droits du compte qui l'a créé.
+
+Or l'appli n'a besoin que d'**un seul appel de service** : ajouter une ligne
+dans une liste de tâches. Lui confier un jeton admin, c'est donner les clés
+de la maison à quelqu'un qui vient arroser les plantes.
+
+| | Ce que le secret permet en cas de fuite | Mise en place |
+|---|---|---|
+| **Webhook** *(recommandé)* | Ajouter des lignes dans **cette liste**, rien d'autre | Une automatisation à coller |
+| Jeton, compte non-admin | Lire tous les états, appeler la plupart des services | Créer un utilisateur dédié |
+| Jeton, compte admin | **Tout** : serrures, alarme, caméras, configuration | Rien à faire *(à éviter)* |
+
+Le mode jeton reste disponible pour la compatibilité et pour qui ne veut pas
+créer d'automatisation. **Si tu l'utilises, génère au minimum le jeton depuis
+un compte non-administrateur dédié** (Paramètres → Personnes → Ajouter,
+« Administrateur » sur *Non*), puis connecte-toi avec ce compte pour créer le
+jeton depuis son profil.
+
+### 4.3 Mode webhook (recommandé)
+
+1. PharmaScan → **Réglages** → activer **Utiliser un webhook**.
+2. Appuyer sur **↻** pour générer un identifiant aléatoire (32 caractères,
+   tiré d'un générateur cryptographique).
+3. Renseigner l'`entity_id` de ta liste — il ne sert qu'à pré-remplir
+   l'automatisation affichée juste en dessous.
+4. Copier le YAML affiché dans l'appli, et le coller dans Home Assistant :
+   **Paramètres → Automatisations → Créer → Modifier en YAML**.
+5. **Tester la connexion**, puis vérifier qu'un item « Test PharmaScan »
+   apparaît dans ta liste.
+
+L'automatisation générée ressemble à ceci :
+
+```yaml
+alias: PharmaScan - ajout medicament
+triggers:
+  - trigger: webhook
+    webhook_id: "<ton identifiant généré>"
+    local_only: true          # refuse les appels venant d'Internet
+actions:
+  - choose:
+      # Le choose n'est pas décoratif : l'appli omet due_date quand la boîte
+      # n'a pas de date lisible, et todo.add_item refuse une date vide.
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.json.due_date is defined }}"
+        sequence:
+          - action: todo.add_item
+            target:
+              entity_id: todo.armoire_a_pharmacie
+            data:
+              item: "{{ trigger.json.item }}"
+              due_date: "{{ trigger.json.due_date }}"
+              description: "{{ trigger.json.description | default('', true) }}"
+    default:
+      - action: todo.add_item
+        target:
+          entity_id: todo.armoire_a_pharmacie
+        data:
+          item: "{{ trigger.json.item }}"
+          description: "{{ trigger.json.description }}"
+mode: queued
+max: 25
+```
+
+Deux détails de conception à ne pas « simplifier » :
+
+- **L'appli n'envoie jamais d'`entity_id`.** C'est l'automatisation qui fixe
+  la liste cible. Laisser l'appli la choisir permettrait à quiconque connaît
+  l'URL d'écrire dans n'importe quelle liste de tâches — ça élargirait la
+  portée du secret sans aucun bénéfice.
+- **`mode: queued`** : en vidant une armoire, plusieurs scans peuvent arriver
+  coup sur coup, et le mode `single` par défaut en jetterait silencieusement.
+
+> **Limite assumée du mode webhook** : un webhook ne renvoie rien. Le bouton
+> de test ne peut donc pas vérifier que l'automatisation existe — Home
+> Assistant répond d'ailleurs `200` même pour un `webhook_id` inconnu, et
+> c'est volontaire de sa part (empêcher l'énumération des identifiants). La
+> seule preuve de bout en bout est visuelle : l'item de test apparaît, ou
+> non.
+
+### 4.4 Mode jeton (hérité)
 
 Clic sur ton nom en bas de la barre latérale → onglet **Sécurité** → bas de
 page → **Créer un jeton**. Le copier immédiatement, il n'est affiché
-qu'une fois.
-
-### 4.3 Renseigner dans l'appli
-
-Ouvrir PharmaScan → **Réglages** → saisir URL, jeton, entité →
-**Tester la connexion**. Le message doit indiquer `OK`.
+qu'une fois. Puis dans l'appli : URL, jeton, entité → **Tester la
+connexion**.
 
 | Message | Signification |
 |---|---|
 | `OK — entité trouvée` | Tout est bon |
 | `Injoignable` | URL fausse, HA éteint, ou pas sur le bon réseau/VPN |
-| `Token refusé (401)` | Jeton mal copié ou révoqué |
+| `Jeton refusé (401)` | Jeton mal copié ou révoqué |
 | `L'entité n'existe pas` | Connexion OK, mais mauvais `entity_id` |
 
 ---
@@ -414,7 +499,7 @@ avant de les coller dans une automatisation.
 | `MainActivity.kt` | Caméra, focus, orchestration | Stratégie de focus documentée en tête de fichier ; **ne jamais déclencher l'AF automatiquement** et **l'ordre d'initialisation est critique** (voir §6) |
 | `Gs1Parser.kt` | Décodage GS1 | Table des AI, checksum GTIN, dates fin de mois — 30 tests |
 | `MedicamentApi.kt` | CIP13 → nom | Échoue en silence par conception, cache local |
-| `HomeAssistant.kt` | Envoi + file d'attente | Distingue erreurs temporaires et définitives |
+| `HomeAssistant.kt` | Envoi + file d'attente | Deux transports (webhook / jeton) ; distingue erreurs temporaires et définitives ; **n'envoie jamais d'`entity_id` en mode webhook** (§4.3) |
 | `Prefs.kt` | Réglages chiffrés | Repli non chiffré si Keystore HS ; stocke aussi le dossier consultable des scans (JSON, non chiffré, non sensible) |
 | `SettingsActivity.kt` | Écran de config | Test de connexion diagnostique |
 | `HistoryActivity.kt` | Dossier des scans | Persisté sur disque, recherche par nom/CIP13, ne relit pas l'état réel de HA |
@@ -517,7 +602,8 @@ Le fichier `MainActivity.kt` porte un avertissement explicite à cet endroit.
 | « Code lu mais inexploitable » | Pas un DataMatrix pharma (EAN, QR promo) | Viser le bon carré, ou saisie manuelle |
 | Nom générique « Médicament CIP … » | API tierce indisponible | Sans gravité, le CIP13 est en description |
 | File qui monte | HA injoignable | Vérifier VPN/réseau, bouton Réessayer |
-| Erreur 401 | Jeton invalide | En régénérer un dans HA |
+| Erreur 401 | Jeton invalide (mode jeton) | En régénérer un dans HA, ou passer au webhook (§4.3) |
+| Webhook : test OK mais rien n'arrive | L'automatisation n'existe pas ou l'`webhook_id` ne correspond pas | HA répond 200 même pour un webhook inconnu : vérifier l'identifiant dans l'automatisation |
 | Boîte refusée « déjà enregistrée » | Déduplication | Réglages → Réinitialiser l'historique |
 | Crash au lancement | Dépendance manquante | Vérifier `build.gradle.kts`, resync Gradle |
 | Erreur Compose à la compilation | Versions Kotlin / compilateur Compose désaccordées | Aligner `kotlinCompilerExtensionVersion` sur le plugin Kotlin |

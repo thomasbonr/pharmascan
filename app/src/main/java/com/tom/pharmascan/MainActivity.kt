@@ -248,7 +248,12 @@ class MainActivity : ComponentActivity() {
             state.set(
                 ScanUiState.Phase.ERROR,
                 "Home Assistant non configuré",
-                "Ouvre les réglages pour saisir l'URL, le jeton et l'entité."
+                when (prefs.connectionMode) {
+                    ConnectionMode.WEBHOOK ->
+                        "Ouvre les réglages pour saisir l'URL et l'identifiant du webhook."
+                    ConnectionMode.TOKEN ->
+                        "Ouvre les réglages pour saisir l'URL, le jeton et l'entité."
+                }
             )
         }
     }

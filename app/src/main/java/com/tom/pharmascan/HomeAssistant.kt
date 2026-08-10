@@ -58,26 +58,62 @@ class HomeAssistant(private val prefs: Prefs) {
 
     // ---- Test de connexion (utilisé par l'écran Réglages) -----------------
 
-    /** Appel BLOQUANT. Vérifie l'URL, le token, et l'existence de l'entité todo. */
+    /** Appel BLOQUANT. Diagnostique la connexion selon le mode configuré. */
     fun testConnectionBlocking(): String {
         if (!prefs.isConfigured) return "Réglages incomplets"
-        return try {
-            val req = Request.Builder()
-                .url("${prefs.haUrl}/api/states/${prefs.todoEntity}")
-                .header("Authorization", "Bearer ${prefs.haToken}")
-                .get()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                when (resp.code) {
-                    200 -> "OK — entité ${prefs.todoEntity} trouvée"
-                    401 -> "Token refusé (401). Régénère un jeton longue durée."
-                    404 -> "Connexion OK mais l'entité « ${prefs.todoEntity} » n'existe pas."
-                    else -> "Réponse inattendue : HTTP ${resp.code}"
-                }
-            }
-        } catch (e: Exception) {
-            "Injoignable : ${e.message ?: e.javaClass.simpleName}"
+        return when (prefs.connectionMode) {
+            ConnectionMode.WEBHOOK -> testWebhookBlocking()
+            ConnectionMode.TOKEN -> testTokenBlocking()
         }
+    }
+
+    private fun testTokenBlocking(): String = try {
+        val req = Request.Builder()
+            .url("${prefs.haUrl}/api/states/${prefs.todoEntity}")
+            .header("Authorization", "Bearer ${prefs.haToken}")
+            .get()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            when (resp.code) {
+                200 -> "OK — entité ${prefs.todoEntity} trouvée"
+                401 -> "Token refusé (401). Régénère un jeton longue durée."
+                404 -> "Connexion OK mais l'entité « ${prefs.todoEntity} » n'existe pas."
+                else -> "Réponse inattendue : HTTP ${resp.code}"
+            }
+        }
+    } catch (e: Exception) {
+        "Injoignable : ${e.message ?: e.javaClass.simpleName}"
+    }
+
+    /**
+     * Un webhook n'expose aucune lecture : on ne peut donc pas vérifier que
+     * l'automatisation existe ni que l'entité est la bonne. Home Assistant
+     * répond d'ailleurs 200 même pour un webhook_id inconnu — c'est
+     * délibéré de sa part, pour empêcher d'énumérer les identifiants
+     * valides. Un 200 prouve donc seulement que HA est joignable.
+     *
+     * La seule vérification honnête de bout en bout est visuelle : on envoie
+     * un vrai item de test, et l'utilisateur va voir s'il apparaît.
+     */
+    private fun testWebhookBlocking(): String = try {
+        val code = postViaWebhook(
+            Item(
+                label = "Test PharmaScan",
+                dueDate = null,
+                description = "Item de test envoyé depuis les réglages. Tu peux le supprimer."
+            )
+        )
+        when {
+            code in 200..299 ->
+                "OK — Home Assistant a répondu. Vérifie maintenant qu'un item " +
+                    "« Test PharmaScan » est apparu dans ta liste : c'est la seule " +
+                    "preuve que l'automatisation est bien branchée."
+            code == 404 -> "URL joignable mais /api/webhook introuvable (404). Vérifie l'URL."
+            code == 405 -> "Méthode refusée (405). Vérifie l'URL de l'instance."
+            else -> "Réponse inattendue : HTTP $code"
+        }
+    } catch (e: Exception) {
+        "Injoignable : ${e.message ?: e.javaClass.simpleName}"
     }
 
     // ---- Envoi ------------------------------------------------------------
@@ -100,8 +136,13 @@ class HomeAssistant(private val prefs: Prefs) {
                     flushQueueBlocking() // profite de la connexion retrouvée
                     SendResult.Success
                 }
-                code == 401 -> SendResult.Failed("Token refusé (401)")
-                code == 404 -> SendResult.Failed("Entité ${prefs.todoEntity} introuvable (404)")
+                code == 401 -> SendResult.Failed("Jeton refusé (401)")
+                code == 404 -> SendResult.Failed(
+                    when (prefs.connectionMode) {
+                        ConnectionMode.WEBHOOK -> "Webhook introuvable (404) — vérifie l'URL"
+                        ConnectionMode.TOKEN -> "Entité ${prefs.todoEntity} introuvable (404)"
+                    }
+                )
                 code == 400 -> SendResult.Failed("Requête refusée par HA (400)")
                 else -> {
                     enqueue(item)
@@ -115,7 +156,36 @@ class HomeAssistant(private val prefs: Prefs) {
         }
     }
 
-    private fun postItem(item: Item): Int {
+    private fun postItem(item: Item): Int = when (prefs.connectionMode) {
+        ConnectionMode.WEBHOOK -> postViaWebhook(item)
+        ConnectionMode.TOKEN -> postViaToken(item)
+    }
+
+    /**
+     * Mode recommandé. Aucun en-tête d'autorisation : le secret est
+     * l'identifiant dans l'URL, et il ne donne accès qu'à l'automatisation
+     * qui le porte.
+     *
+     * On n'envoie DÉLIBÉRÉMENT pas d'entity_id : l'automatisation côté HA
+     * fixe elle-même sa liste cible. Laisser l'appli la choisir permettrait à
+     * quiconque connaît l'URL d'écrire dans n'importe quelle liste de tâches,
+     * ce qui reviendrait à élargir la portée du secret sans raison.
+     */
+    private fun postViaWebhook(item: Item): Int {
+        val payload = JSONObject().apply {
+            put("item", item.label)
+            item.dueDate?.let { put("due_date", it) }
+            item.description?.let { put("description", it) }
+        }
+        val req = Request.Builder()
+            .url("${prefs.haUrl}/api/webhook/${prefs.webhookId}")
+            .header("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(jsonType))
+            .build()
+        client.newCall(req).execute().use { return it.code }
+    }
+
+    private fun postViaToken(item: Item): Int {
         val payload = JSONObject().apply {
             put("entity_id", prefs.todoEntity)
             put("item", item.label)

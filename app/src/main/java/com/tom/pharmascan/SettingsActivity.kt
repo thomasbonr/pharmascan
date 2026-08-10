@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,11 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -43,12 +46,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.tom.pharmascan.ui.PharmaScanTheme
 import com.tom.pharmascan.ui.StatusError
 import com.tom.pharmascan.ui.StatusSuccess
+import java.security.SecureRandom
 import java.util.concurrent.Executors
 
 /**
@@ -59,7 +64,7 @@ import java.util.concurrent.Executors
  * recompiler.
  *
  * Le bouton de test est le point d'ergonomie important : il distingue les
- * trois échecs classiques (serveur injoignable / jeton refusé / entité
+ * échecs classiques (serveur injoignable / secret refusé / entité
  * inexistante) au lieu de laisser l'utilisateur deviner.
  */
 class SettingsActivity : ComponentActivity() {
@@ -80,21 +85,28 @@ class SettingsActivity : ComponentActivity() {
         setContent {
             PharmaScanTheme {
                 SettingsScreen(
-                    initialUrl = prefs.haUrl,
-                    initialToken = prefs.haToken,
-                    initialEntity = prefs.todoEntity,
-                    initialSound = prefs.soundEnabled,
-                    initialAutoZoom = prefs.autoZoomEnabled,
-                    initialMacroLens = prefs.macroLensEnabled,
-                    initialAfDiagnostics = prefs.afDiagnosticsEnabled,
-                    onSave = { url, token, entity, sound, autoZoom, macroLens, afDiagnostics ->
-                        prefs.haUrl = url
-                        prefs.haToken = token
-                        prefs.todoEntity = entity
-                        prefs.soundEnabled = sound
-                        prefs.autoZoomEnabled = autoZoom
-                        prefs.macroLensEnabled = macroLens
-                        prefs.afDiagnosticsEnabled = afDiagnostics
+                    initial = SettingsForm(
+                        url = prefs.haUrl,
+                        token = prefs.haToken,
+                        entity = prefs.todoEntity,
+                        webhookId = prefs.webhookId,
+                        useWebhook = prefs.connectionMode == ConnectionMode.WEBHOOK,
+                        sound = prefs.soundEnabled,
+                        autoZoom = prefs.autoZoomEnabled,
+                        macroLens = prefs.macroLensEnabled,
+                        afDiagnostics = prefs.afDiagnosticsEnabled
+                    ),
+                    onSave = { form ->
+                        prefs.haUrl = form.url
+                        prefs.haToken = form.token
+                        prefs.todoEntity = form.entity
+                        prefs.webhookId = form.webhookId
+                        prefs.connectionMode =
+                            if (form.useWebhook) ConnectionMode.WEBHOOK else ConnectionMode.TOKEN
+                        prefs.soundEnabled = form.sound
+                        prefs.autoZoomEnabled = form.autoZoom
+                        prefs.macroLensEnabled = form.macroLens
+                        prefs.afDiagnosticsEnabled = form.afDiagnostics
                     },
                     onTest = { callback ->
                         executor.execute {
@@ -115,32 +127,109 @@ class SettingsActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Regroupe l'état du formulaire. Les réglages se sont multipliés : passer
+ * neuf paramètres positionnels à `onSave` était devenu illisible et facile à
+ * intervertir silencieusement (tous booléens à la fin).
+ */
+private data class SettingsForm(
+    val url: String,
+    val token: String,
+    val entity: String,
+    val webhookId: String,
+    val useWebhook: Boolean,
+    val sound: Boolean,
+    val autoZoom: Boolean,
+    val macroLens: Boolean,
+    val afDiagnostics: Boolean
+)
+
+/** Secret du webhook : 32 caractères tirés d'un générateur cryptographique. */
+private fun generateWebhookId(): String {
+    val alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    val random = SecureRandom()
+    return (1..32).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
+}
+
+/**
+ * L'automatisation à coller dans Home Assistant.
+ *
+ * Le `choose` n'est pas de la coquetterie : l'appli omet `due_date` pour une
+ * boîte sans date de péremption lisible, et `todo.add_item` refuse une date
+ * vide. Sans cette distinction, ces boîtes-là échoueraient silencieusement.
+ */
+private fun buildAutomationYaml(webhookId: String, entity: String): String {
+    val id = webhookId.ifBlank { "<génère un identifiant ci-dessus>" }
+    val target = entity.ifBlank { "todo.armoire_a_pharmacie" }
+    return """
+        alias: PharmaScan - ajout medicament
+        triggers:
+          - trigger: webhook
+            webhook_id: "$id"
+            local_only: true
+        actions:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.json.due_date is defined }}"
+                sequence:
+                  - action: todo.add_item
+                    target:
+                      entity_id: $target
+                    data:
+                      item: "{{ trigger.json.item }}"
+                      due_date: "{{ trigger.json.due_date }}"
+                      description: "{{ trigger.json.description | default('', true) }}"
+            default:
+              - action: todo.add_item
+                target:
+                  entity_id: $target
+                data:
+                  item: "{{ trigger.json.item }}"
+                  description: "{{ trigger.json.description | default('', true) }}"
+        mode: queued
+        max: 25
+    """.trimIndent()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SettingsScreen(
-    initialUrl: String,
-    initialToken: String,
-    initialEntity: String,
-    initialSound: Boolean,
-    initialAutoZoom: Boolean,
-    initialMacroLens: Boolean,
-    initialAfDiagnostics: Boolean,
-    onSave: (String, String, String, Boolean, Boolean, Boolean, Boolean) -> Unit,
+    initial: SettingsForm,
+    onSave: (SettingsForm) -> Unit,
     onTest: ((String) -> Unit) -> Unit,
     onClearHistory: () -> Unit,
     onBack: () -> Unit
 ) {
-    var url by remember { mutableStateOf(initialUrl) }
-    var token by remember { mutableStateOf(initialToken) }
-    var entity by remember { mutableStateOf(initialEntity) }
-    var sound by remember { mutableStateOf(initialSound) }
-    var autoZoom by remember { mutableStateOf(initialAutoZoom) }
-    var macroLens by remember { mutableStateOf(initialMacroLens) }
-    var afDiagnostics by remember { mutableStateOf(initialAfDiagnostics) }
-    var tokenVisible by remember { mutableStateOf(false) }
+    var url by remember { mutableStateOf(initial.url) }
+    var token by remember { mutableStateOf(initial.token) }
+    var entity by remember { mutableStateOf(initial.entity) }
+    var webhookId by remember { mutableStateOf(initial.webhookId) }
+    var useWebhook by remember { mutableStateOf(initial.useWebhook) }
+    var sound by remember { mutableStateOf(initial.sound) }
+    var autoZoom by remember { mutableStateOf(initial.autoZoom) }
+    var macroLens by remember { mutableStateOf(initial.macroLens) }
+    var afDiagnostics by remember { mutableStateOf(initial.afDiagnostics) }
+
+    var secretVisible by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<String?>(null) }
     var historyCleared by remember { mutableStateOf(false) }
+
+    fun currentForm() = SettingsForm(
+        url = url,
+        token = token,
+        entity = entity,
+        webhookId = webhookId,
+        useWebhook = useWebhook,
+        sound = sound,
+        autoZoom = autoZoom,
+        macroLens = macroLens,
+        afDiagnostics = afDiagnostics
+    )
+
+    val canTest = url.isNotBlank() &&
+        if (useWebhook) webhookId.isNotBlank() else token.isNotBlank()
 
     Scaffold(
         topBar = {
@@ -148,7 +237,7 @@ private fun SettingsScreen(
                 title = { Text("Réglages") },
                 navigationIcon = {
                     IconButton(onClick = {
-                        onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics)
+                        onSave(currentForm())
                         onBack()
                     }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
@@ -178,43 +267,127 @@ private fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Utiliser un webhook", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Recommandé. Un webhook ne peut déclencher qu'une seule " +
+                            "automatisation : au pire, quelqu'un ajoute des lignes à ta liste " +
+                            "de pharmacie. Un jeton longue durée, lui, donne TOUS les droits " +
+                            "du compte qui l'a créé — serrures, alarme, caméras, configuration.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = useWebhook,
+                    onCheckedChange = { useWebhook = it; testResult = null }
+                )
+            }
+
             Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it; testResult = null },
-                label = { Text("Jeton d'accès longue durée") },
-                singleLine = true,
-                visualTransformation = if (tokenVisible) VisualTransformation.None
-                                       else PasswordVisualTransformation(),
-                trailingIcon = {
-                    IconButton(onClick = { tokenVisible = !tokenVisible }) {
-                        Icon(
-                            if (tokenVisible) Icons.Default.VisibilityOff
-                            else Icons.Default.Visibility,
-                            if (tokenVisible) "Masquer" else "Afficher"
+            if (useWebhook) {
+                OutlinedTextField(
+                    value = webhookId,
+                    onValueChange = { webhookId = it.trim(); testResult = null },
+                    label = { Text("Identifiant du webhook") },
+                    singleLine = true,
+                    visualTransformation = if (secretVisible) VisualTransformation.None
+                                           else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        Row {
+                            IconButton(onClick = { secretVisible = !secretVisible }) {
+                                Icon(
+                                    if (secretVisible) Icons.Default.VisibilityOff
+                                    else Icons.Default.Visibility,
+                                    if (secretVisible) "Masquer" else "Afficher"
+                                )
+                            }
+                            IconButton(onClick = {
+                                webhookId = generateWebhookId()
+                                secretVisible = true
+                                testResult = null
+                            }) {
+                                Icon(Icons.Default.Refresh, "Générer un identifiant")
+                            }
+                        }
+                    },
+                    supportingText = {
+                        Text(
+                            "Génère-le ici (bouton ↻), puis colle-le dans l'automatisation " +
+                                "ci-dessous. C'est un secret : il tient lieu de mot de passe."
                         )
-                    }
-                },
-                supportingText = {
-                    Text("Profil > Sécurité > Jetons d'accès longue durée. Stocké chiffré via le Keystore Android.")
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
-            Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(12.dp))
 
-            OutlinedTextField(
-                value = entity,
-                onValueChange = { entity = it; testResult = null },
-                label = { Text("Entité liste de tâches") },
-                placeholder = { Text("todo.armoire_a_pharmacie") },
-                singleLine = true,
-                supportingText = {
-                    Text("Paramètres > Appareils et services > Liste de tâches locale, puis relève son entity_id.")
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+                OutlinedTextField(
+                    value = entity,
+                    onValueChange = { entity = it },
+                    label = { Text("Entité liste de tâches") },
+                    placeholder = { Text("todo.armoire_a_pharmacie") },
+                    singleLine = true,
+                    supportingText = {
+                        Text(
+                            "Sert uniquement à pré-remplir l'automatisation ci-dessous. " +
+                                "En mode webhook, l'appli ne l'envoie jamais : c'est " +
+                                "Home Assistant qui décide de la liste cible."
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(16.dp))
+                AutomationCard(buildAutomationYaml(webhookId, entity))
+            } else {
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it; testResult = null },
+                    label = { Text("Jeton d'accès longue durée") },
+                    singleLine = true,
+                    visualTransformation = if (secretVisible) VisualTransformation.None
+                                           else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { secretVisible = !secretVisible }) {
+                            Icon(
+                                if (secretVisible) Icons.Default.VisibilityOff
+                                else Icons.Default.Visibility,
+                                if (secretVisible) "Masquer" else "Afficher"
+                            )
+                        }
+                    },
+                    supportingText = {
+                        Text(
+                            "Profil > Sécurité > Jetons d'accès longue durée. Pense à le " +
+                                "générer depuis un compte NON-administrateur dédié : ça limite " +
+                                "les dégâts si le téléphone est compromis."
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = entity,
+                    onValueChange = { entity = it; testResult = null },
+                    label = { Text("Entité liste de tâches") },
+                    placeholder = { Text("todo.armoire_a_pharmacie") },
+                    singleLine = true,
+                    supportingText = {
+                        Text("Paramètres > Appareils et services > Liste de tâches locale, puis relève son entity_id.")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
             Spacer(Modifier.height(20.dp))
 
@@ -226,7 +399,7 @@ private fun SettingsScreen(
                     onClick = {
                         // On enregistre d'abord, sinon on testerait les
                         // anciennes valeurs.
-                        onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics)
+                        onSave(currentForm())
                         testing = true
                         testResult = null
                         onTest { message ->
@@ -234,7 +407,7 @@ private fun SettingsScreen(
                             testResult = message
                         }
                     },
-                    enabled = !testing && url.isNotBlank() && token.isNotBlank(),
+                    enabled = !testing && canTest,
                     modifier = Modifier.weight(1f)
                 ) {
                     if (testing) {
@@ -351,11 +524,48 @@ private fun SettingsScreen(
             Spacer(Modifier.height(28.dp))
 
             Button(
-                onClick = { onSave(url, token, entity, sound, autoZoom, macroLens, afDiagnostics); onBack() },
+                onClick = { onSave(currentForm()); onBack() },
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Enregistrer et revenir au scan") }
 
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * L'automatisation à recopier dans Home Assistant. Texte sélectionnable pour
+ * pouvoir être copié, et scrollable horizontalement : le YAML est sensible à
+ * l'indentation, on ne veut surtout pas que les lignes soient repliées.
+ */
+@Composable
+private fun AutomationCard(yaml: String) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                "Automatisation à créer dans Home Assistant",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                "Paramètres > Automatisations > Créer > Modifier en YAML, puis colle ceci. " +
+                    "L'option local_only refuse les appels venant d'Internet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
+            )
+            SelectionContainer {
+                Text(
+                    yaml,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                )
+            }
         }
     }
 }
