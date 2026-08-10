@@ -13,9 +13,11 @@ Un scan = un geste. Pas de saisie, pas de compte, pas de cloud tiers.
 > Identifiers, clé de contrôle GTIN, règles de date) a été portée puis
 > validée par **30 tests automatisés qui passent tous** — dont un qui a
 > révélé une vraie faille, corrigée depuis (voir §9). Le code Android
-> lui-même n'a **pas pu être compilé** : ni SDK Android ni compilateur
-> Kotlin n'étaient disponibles. Prévois une première session de mise au
-> point.
+> compile (`assembleDebug`) et a été testé en usage réel : le choix du
+> capteur pour l'autofocus (§6) et le mapping des champs de l'API
+> Médicaments FR (§11) ont depuis été corrigés suite à des retours
+> d'usage — sur le second point, la réponse réelle de l'API a été vérifiée
+> en direct, pas seulement supposée depuis sa documentation.
 
 ## Table des matières
 
@@ -498,12 +500,16 @@ Logs utiles : `adb logcat -s PharmaScan PharmaScan/HA PharmaScan/API PharmaScan/
 ## 11. Limites connues
 
 - **L'API Médicaments FR est un service tiers** (`medicaments-api.giygas.dev`),
-  gratuit et sans garantie. Le format exact de sa réponse JSON n'a pas été
-  validé contre l'API en production : `MedicamentApi.extractName()` teste
-  plusieurs clés usuelles et tolère l'échec, mais il faudra peut-être
-  ajuster `NAME_KEYS` après un premier test réel. En cas de disparition du
-  service, l'alternative est de télécharger l'export complet de la BDPM
-  (~20 Mo) et de l'embarquer en base locale — plus robuste, mais plus lourd.
+  gratuit et sans garantie. Le nom est résolu via `GET /v1/medicaments?cip=`,
+  champ `elementPharmaceutique` (vérifié contre l'API en direct, cf.
+  `openapi.yaml` du service). **Piège à ne pas réintroduire** : la réponse
+  contient aussi un tableau imbriqué `presentation[]` dont le champ
+  `libelle` ressemble à un nom mais décrit en réalité le conditionnement
+  ("plaquette(s) PVC-Aluminium de 18 comprimé(s)") — l'utiliser comme nom
+  affichait le blister à la place du médicament (bug réel, corrigé). En cas
+  de disparition du service, l'alternative est de télécharger l'export
+  complet de la BDPM (~20 Mo) et de l'embarquer en base locale — plus
+  robuste, mais plus lourd.
 - **Pas de suppression depuis l'appli.** Retirer un médicament de l'armoire
   se fait côté Home Assistant, en cochant l'item.
 - **Pas de gestion des quantités.** Une boîte = un item. Un médicament pris
@@ -516,13 +522,13 @@ Logs utiles : `adb logcat -s PharmaScan PharmaScan/HA PharmaScan/API PharmaScan/
   refusera tant que l'historique n'est pas réinitialisé.
 - **Pas de mode multi-appareils.** Deux téléphones scannant la même armoire
   ne partagent pas leur historique de déduplication.
-- **La logique GS1 est testée, le code Android ne l'est pas.** Les 30 tests
-  couvrent le parsing, le checksum et les dates. Le reste — caméra, Compose,
-  réseau — n'a pas pu être compilé faute de SDK Android et de compilateur
-  Kotlin dans l'environnement de rédaction. Les zones les plus susceptibles
-  de demander un ajustement au premier build : `MedicamentApi.NAME_KEYS`
-  (format JSON réel de l'API tierce) et les valeurs de focus selon ton
-  capteur.
+- **La logique GS1 est testée par des tests automatisés, le reste du code
+  Android l'est par l'usage.** Les 30 tests couvrent le parsing GS1, le
+  checksum et les dates. Le reste — caméra, Compose, réseau — n'a pas de
+  suite de tests embarquée ; il compile et a été ajusté suite à des retours
+  d'usage réel (choix du capteur, mapping API). Reste à surveiller au fil de
+  l'usage : le comportement de l'autofocus sur les appareils sans capteur à
+  focus rapproché adéquat (voir §6).
 - **Pas de tests unitaires embarqués dans le projet.** La validation a été
   faite sur un port de la logique. Si tu veux les rapatrier, `Gs1Parser` est
   un `object` sans dépendance Android : il se teste directement en JUnit,

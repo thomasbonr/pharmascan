@@ -38,55 +38,51 @@ class MedicamentApi(private val prefs: Prefs) {
     fun lookupBlocking(cip13: String): Result {
         prefs.cachedName(cip13)?.let { return Result(it, fromCache = true) }
 
-        // Deux endpoints possibles : on tente le plus spécifique d'abord.
-        val urls = listOf(
-            "$BASE/v1/presentations/$cip13",
-            "$BASE/v1/medicaments?cip=$cip13"
-        )
+        val url = "$BASE/v1/medicaments?cip=$cip13"
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .header("User-Agent", "PharmaScan/1.0 (usage personnel)")
+                .get()
+                .build()
 
-        var lastError: String? = null
-        for (url in urls) {
-            try {
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Accept", "application/json")
-                    .header("User-Agent", "PharmaScan/1.0 (usage personnel)")
-                    .get()
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    if (response.code == 429) {
-                        lastError = "Trop de requêtes (rate limit), réessaie dans un instant"
-                        return@use
-                    }
-                    if (!response.isSuccessful) {
-                        lastError = "HTTP ${response.code}"
-                        return@use
-                    }
-                    val body = response.body?.string()
-                    if (body.isNullOrBlank()) {
-                        lastError = "Réponse vide"
-                        return@use
-                    }
-                    val name = extractName(body)
-                    if (name != null) {
-                        prefs.cacheName(cip13, name)
-                        return Result(name, fromCache = false)
-                    }
-                    lastError = "Nom introuvable dans la réponse"
+            client.newCall(request).execute().use { response ->
+                if (response.code == 429) {
+                    return Result(null, fromCache = false, error = "Trop de requêtes (rate limit), réessaie dans un instant")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Échec requête $url", e)
-                lastError = e.message ?: e.javaClass.simpleName
+                if (!response.isSuccessful) {
+                    return Result(null, fromCache = false, error = "HTTP ${response.code}")
+                }
+                val body = response.body?.string()
+                if (body.isNullOrBlank()) {
+                    return Result(null, fromCache = false, error = "Réponse vide")
+                }
+                val name = extractName(body)
+                if (name != null) {
+                    prefs.cacheName(cip13, name)
+                    return Result(name, fromCache = false)
+                }
+                return Result(null, fromCache = false, error = "Nom introuvable dans la réponse")
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "Échec requête $url", e)
+            return Result(null, fromCache = false, error = e.message ?: e.javaClass.simpleName)
         }
-        return Result(null, fromCache = false, error = lastError)
     }
 
     /**
-     * Extraction tolérante : la forme exacte du JSON varie selon l'endpoint
-     * et peut changer côté API. On explore récursivement les enveloppes
-     * usuelles et on teste plusieurs clés de dénomination avant d'abandonner.
+     * `GET /v1/medicaments?cip=` renvoie soit un objet Medicament nu (cas
+     * courant, un seul résultat pour un CIP exact), soit un tableau nu, soit
+     * un objet paginé `{ data: [...] }` — les trois formes sont vues en
+     * pratique. Le nom du médicament est dans `elementPharmaceutique`
+     * ("PARACETAMOL/CODEINE VIATRIS 500 mg/30 mg, comprimé").
+     *
+     * ATTENTION : `presentation[].libelle` (imbriqué) N'EST PAS le nom du
+     * médicament — c'est le conditionnement ("plaquette(s) PVC-Aluminium de
+     * 18 comprimé(s)"). Confondre les deux a longtemps affiché le
+     * conditionnement à la place du nom ; ne pas réintroduire "libelle"
+     * comme clé de premier niveau pour cette raison.
      */
     private fun extractName(body: String): String? {
         val root = try {
@@ -95,36 +91,20 @@ class MedicamentApi(private val prefs: Prefs) {
             return null
         }
 
-        val candidate = unwrap(root) ?: return null
+        val candidate = when (root) {
+            is JSONArray -> if (root.length() > 0) root.optJSONObject(0) else null
+            is JSONObject -> {
+                val data = root.optJSONArray("data")
+                if (data != null && data.length() > 0) data.optJSONObject(0) else root
+            }
+            else -> null
+        } ?: return null
 
         for (key in NAME_KEYS) {
             val value = candidate.optString(key, "")
             if (value.isNotBlank() && value != "null") return cleanup(value)
         }
-
-        // Parfois la dénomination est un cran plus bas, dans un objet imbriqué
-        for (nested in listOf("medicament", "specialite", "produit")) {
-            candidate.optJSONObject(nested)?.let { obj ->
-                for (key in NAME_KEYS) {
-                    val value = obj.optString(key, "")
-                    if (value.isNotBlank() && value != "null") return cleanup(value)
-                }
-            }
-        }
         return null
-    }
-
-    /** Déballe les enveloppes { results: [...] } / { data: [...] } / [...] */
-    private fun unwrap(root: Any?): JSONObject? = when (root) {
-        is JSONArray -> if (root.length() > 0) root.optJSONObject(0) else null
-        is JSONObject -> {
-            val arr = root.optJSONArray("results")
-                ?: root.optJSONArray("data")
-                ?: root.optJSONArray("medicaments")
-                ?: root.optJSONArray("presentations")
-            if (arr != null && arr.length() > 0) arr.optJSONObject(0) else root
-        }
-        else -> null
     }
 
     /**
@@ -141,12 +121,15 @@ class MedicamentApi(private val prefs: Prefs) {
     companion object {
         private const val TAG = "PharmaScan/API"
         private const val BASE = "https://medicaments-api.giygas.dev"
+        /**
+         * "elementPharmaceutique" est le champ confirmé de la réponse réelle
+         * de /v1/medicaments (vérifié en interrogeant l'API en direct). Le
+         * reste est un filet de sécurité si le schéma change côté API.
+         */
         private val NAME_KEYS = listOf(
+            "elementPharmaceutique",
             "denomination",
-            "denomination_medicament",
             "denominationMedicament",
-            "libelle",
-            "libelle_presentation",
             "nom",
             "name"
         )
