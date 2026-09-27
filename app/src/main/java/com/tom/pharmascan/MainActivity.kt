@@ -279,8 +279,22 @@ class MainActivity : ComponentActivity() {
             if (prefs.macroLensEnabled != boundWithMacroLens) {
                 previewView?.let { bindCamera(it) }
             }
+
+            // Reprend la surveillance suspendue dans onPause().
+            mainHandler.removeCallbacks(afWatchdog)
+            mainHandler.post(afWatchdog)
         }
         if (!prefs.afDiagnosticsEnabled) state.debugInfo = null
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // La surveillance AF tournait toutes les 700 ms même écran quitté
+        // (Réglages, Historique, appli en arrière-plan) : lecture du réglage
+        // de diagnostic dans le magasin chiffré à chaque passage, et commandes
+        // envoyées à une caméra que CameraX a déjà fermée. Elle n'a de sens
+        // que caméra active.
+        mainHandler.removeCallbacks(afWatchdog)
     }
 
     override fun onDestroy() {
