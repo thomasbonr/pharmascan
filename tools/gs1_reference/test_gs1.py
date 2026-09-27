@@ -91,6 +91,11 @@ print("\n=== 12. Regression : lot trop long = GS manquant ===")
 f10, w10 = parse(f"01{g}" + "10" + "A"*25)
 check("lot >20 caracteres signale", len(f10.get("10","")) > 20)
 
+print("\n=== 13. AI 410 (GLN) : 3 chiffres + 13, sans GS ===")
+f11, w11 = parse(f"01{g}" + "4103012345678900" + "17271130")
+check("AI 410 lue sur 3+13", f11.get("410") == "3012345678900", str(f11))
+check("parsing non decale apres l'AI 410", f11.get("17") == "271130" and w11 == [], str(w11))
+
 print("\n" + "=" * 50)
 print(f"RESULTAT : {ok} PASS / {fail} FAIL")
 raise SystemExit(1 if fail else 0)

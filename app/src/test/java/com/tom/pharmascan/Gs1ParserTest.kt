@@ -190,6 +190,13 @@ class Gs1ParserTest {
         assertEquals("000250", d.fields["3103"])
     }
 
+    @Test fun `AI 410 GLN lue sur 3 plus 13 sans decaler la suite`() {
+        val d = Gs1Parser.parse("01$gtin" + "4103012345678900" + "17271130")
+        assertEquals("3012345678900", d.fields["410"])
+        assertEquals("271130", d.expiryRaw)
+        assertEquals(emptyList<String>(), d.errors)
+    }
+
     // ---- 7. Déduplication --------------------------------------------------
 
     @Test fun `boxKey distingue deux boites du meme produit`() {

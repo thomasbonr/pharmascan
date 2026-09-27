@@ -41,13 +41,21 @@ object Gs1Parser {
         "17" to 6,  // date de péremption  <-- celle qui nous intéresse
         "18" to 6,
         "19" to 6,
-        "20" to 2,  // variante produit
-        "41" to 13
+        "20" to 2   // variante produit
     )
 
     /** AI à 4 chiffres, longueur de données fixe de 6 (poids/mesures : 310n..369n). */
     private fun isFourDigitMeasureAi(ai2: String): Boolean =
         ai2.length == 2 && ai2[0] == '3' && ai2[1] in '1'..'6'
+
+    /**
+     * AI à 3 chiffres 410..417 (GLN), 13 chiffres de données, sans GS.
+     * Le préfixe « 41 » figure dans la table GS1 des longueurs prédéfinies
+     * avec une longueur TOTALE de 16 : 3 chiffres d'AI + 13 de données. La
+     * traiter comme une AI à 2 chiffres suivie de 13 caractères décalait
+     * toute la suite du parsing d'un caractère.
+     */
+    private fun isThreeDigitGlnAi(ai2: String): Boolean = ai2 == "41"
 
     data class Gs1Data(
         val raw: String,
@@ -143,6 +151,16 @@ object Gs1Parser {
                 val ai4 = s.substring(i, i + 4)
                 fields[ai4] = s.substring(i + 4, i + 10)
                 i += 10
+                continue
+            }
+
+            if (isThreeDigitGlnAi(ai2)) {
+                if (i + 3 + 13 > s.length) {
+                    errors.add("AI $ai2 tronquée")
+                    break
+                }
+                fields[s.substring(i, i + 3)] = s.substring(i + 3, i + 16)
+                i += 16
                 continue
             }
 

@@ -7,7 +7,7 @@ GS = '\x1d'
 FIXED_LENGTH = {
     "00": 18, "01": 14, "02": 14, "03": 14, "04": 16,
     "11": 6, "12": 6, "13": 6, "14": 6, "15": 6, "16": 6,
-    "17": 6, "18": 6, "19": 6, "20": 2, "41": 13,
+    "17": 6, "18": 6, "19": 6, "20": 2,
 }
 
 
@@ -73,6 +73,13 @@ def parse(raw):
                 break
             fields[s[i:i+4]] = s[i+4:i+10]
             i += 10
+            continue
+        if ai2 == "41":  # AI 410..417 : 3 chiffres + 13 (longueur totale 16)
+            if i + 16 > len(s):
+                warnings.append(f"AI {ai2} tronquee")
+                break
+            fields[s[i:i+3]] = s[i+3:i+16]
+            i += 16
             continue
         i += 2
         fixed = FIXED_LENGTH.get(ai2)
