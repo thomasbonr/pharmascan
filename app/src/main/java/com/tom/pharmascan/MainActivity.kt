@@ -61,6 +61,7 @@ import com.tom.pharmascan.ui.ScanUiState
 import com.tom.pharmascan.ui.ScannerScreen
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -288,6 +289,26 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.shutdown()
         workExecutor.shutdown()
         scanner?.close()
+    }
+
+    /**
+     * Lance une tâche réseau/disque en arrière-plan, sauf si l'écran est déjà
+     * détruit.
+     *
+     * Un envoi peut durer une vingtaine de secondes (API médicaments + HA +
+     * vidange de la file). Si l'utilisateur quitte l'écran entre-temps,
+     * onDestroy() arrête workExecutor, mais le callback posté en fin d'envoi
+     * s'exécute quand même (il est posté APRÈS removeCallbacksAndMessages) et
+     * appelait refreshQueueBadge() -> execute() sur un executor arrêté ->
+     * RejectedExecutionException sur le thread principal, donc crash.
+     */
+    private fun runInBackground(task: () -> Unit) {
+        if (workExecutor.isShutdown) return
+        try {
+            workExecutor.execute(task)
+        } catch (e: RejectedExecutionException) {
+            Log.w(TAG, "Tâche ignorée : écran en cours de fermeture", e)
+        }
     }
 
     private fun hasCameraPermission() =
@@ -769,7 +790,7 @@ class MainActivity : ComponentActivity() {
             "CIP $cip13 · périme le ${data.expiryIso?.let { frenchDate(it) } ?: "?"}"
         )
 
-        workExecutor.execute {
+        runInBackground {
             val lookup = api.lookupBlocking(cip13)
             val name = lookup.name ?: "Médicament CIP $cip13"
 
@@ -843,7 +864,7 @@ class MainActivity : ComponentActivity() {
 
     private fun submitManual(cip13: String, expiryIso: String?) {
         state.set(ScanUiState.Phase.PROCESSING, "Saisie manuelle", "CIP $cip13")
-        workExecutor.execute {
+        runInBackground {
             val lookup = api.lookupBlocking(cip13)
             val name = lookup.name ?: "Médicament CIP $cip13"
             val label = buildString {
@@ -886,13 +907,13 @@ class MainActivity : ComponentActivity() {
     // ======================================================================
 
     private fun flushQueue(announceEmpty: Boolean) {
-        workExecutor.execute {
+        runInBackground {
             val before = ha.queueSize()
             if (before == 0) {
                 if (announceEmpty) mainHandler.post {
                     state.set(state.phase, state.headline, "Rien en attente, tout est synchronisé")
                 }
-                return@execute
+                return@runInBackground
             }
             val sent = ha.flushQueueBlocking()
             mainHandler.post {
@@ -907,7 +928,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshQueueBadge() {
-        workExecutor.execute {
+        runInBackground {
             val size = ha.queueSize()
             mainHandler.post { state.pendingCount = size }
         }
