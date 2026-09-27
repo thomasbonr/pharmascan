@@ -8,6 +8,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * Client REST Home Assistant.
@@ -202,6 +203,20 @@ class HomeAssistant(private val prefs: Prefs) {
     }
 
     // ---- File d'attente persistée ----------------------------------------
+    //
+    // Deux verrous, partagés par toutes les instances (MainActivity et
+    // SettingsActivity ont chacune la leur, et MainActivity envoie depuis un
+    // pool de DEUX threads) :
+    //
+    //  - QUEUE_LOCK protège chaque lecture-modification-écriture du JSON.
+    //    Sans lui, un enqueue() pendant une vidange était écrasé par le
+    //    writeQueue() final de la vidange : scan perdu.
+    //  - FLUSH_LOCK sérialise les vidanges. Sans lui, deux vidanges
+    //    simultanées (onResume + scan réussi) envoyaient les mêmes items
+    //    deux fois à Home Assistant.
+    //
+    // Le réseau n'est jamais appelé en tenant QUEUE_LOCK : un enqueue() ne
+    // doit pas attendre les timeouts HTTP d'une vidange en cours.
 
     private fun readQueue(): MutableList<Item> {
         return try {
@@ -219,50 +234,72 @@ class HomeAssistant(private val prefs: Prefs) {
         prefs.pendingQueueJson = arr.toString()
     }
 
-    private fun enqueue(item: Item) {
+    private fun enqueue(item: Item) = synchronized(QUEUE_LOCK) {
         val q = readQueue()
         q.add(item)
         // Borne de sécurité : on ne garde pas indéfiniment
         writeQueue(if (q.size > 500) q.takeLast(500) else q)
     }
 
-    fun queueSize(): Int = readQueue().size
+    fun queueSize(): Int = synchronized(QUEUE_LOCK) { readQueue().size }
 
     /**
      * Appel BLOQUANT. Tente de vider la file. S'arrête au premier échec pour
      * préserver l'ordre et ne pas marteler un serveur injoignable.
      * Renvoie le nombre d'items envoyés avec succès.
+     *
+     * Seul un 400 retire un item sans l'avoir envoyé : la requête elle-même
+     * est refusée, la renvoyer telle quelle échouerait toujours. Un 401 ou
+     * un 404 signale au contraire une erreur de CONFIGURATION (jeton expiré,
+     * webhook renommé) : l'item est conservé et partira une fois les réglages
+     * corrigés. Auparavant, un jeton expiré vidait silencieusement toute la
+     * file — des scans pourtant annoncés « envoi automatique plus tard ».
      */
     fun flushQueueBlocking(): Int {
         if (!prefs.isConfigured) return 0
-        val queue = readQueue()
-        if (queue.isEmpty()) return 0
+        FLUSH_LOCK.lock()
+        try {
+            val snapshot = synchronized(QUEUE_LOCK) { readQueue() }
+            if (snapshot.isEmpty()) return 0
 
-        var sent = 0
-        val iterator = queue.iterator()
-        while (iterator.hasNext()) {
-            val item = iterator.next()
-            try {
-                val code = postItem(item)
+            val done = mutableListOf<Item>()
+            var sent = 0
+            for (item in snapshot) {
+                val code = try {
+                    postItem(item)
+                } catch (e: Exception) {
+                    break // réseau toujours HS, on réessaiera
+                }
                 if (code in 200..299) {
-                    iterator.remove()
+                    done += item
                     sent++
-                } else if (code == 401 || code == 404 || code == 400) {
-                    // Erreur définitive : on retire pour ne pas bloquer la file
-                    Log.w(TAG, "Item abandonné (HTTP $code) : ${item.label}")
-                    iterator.remove()
+                } else if (code == 400) {
+                    Log.w(TAG, "Item abandonné (HTTP 400, requête refusée) : ${item.label}")
+                    done += item
                 } else {
+                    // 401/404 : réglages à corriger ; 5xx/autres : temporaire.
+                    Log.w(TAG, "Vidange interrompue (HTTP $code), items conservés")
                     break
                 }
-            } catch (e: Exception) {
-                break // réseau toujours HS, on réessaiera
             }
+
+            if (done.isNotEmpty()) {
+                // Relit la file : des items ont pu être ajoutés pendant l'envoi.
+                synchronized(QUEUE_LOCK) {
+                    val current = readQueue()
+                    done.forEach { current.remove(it) }
+                    writeQueue(current)
+                }
+            }
+            return sent
+        } finally {
+            FLUSH_LOCK.unlock()
         }
-        writeQueue(queue)
-        return sent
     }
 
     companion object {
         private const val TAG = "PharmaScan/HA"
+        private val QUEUE_LOCK = Any()
+        private val FLUSH_LOCK = ReentrantLock()
     }
 }
