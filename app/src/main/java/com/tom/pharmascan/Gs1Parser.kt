@@ -285,10 +285,15 @@ object Gs1Parser {
 
         val currentCentury = (currentYear / 100) * 100
         var year = currentCentury + yy
-        // Fenêtre glissante : une date > 50 ans dans le futur appartient au
-        // siècle précédent (et inversement).
-        if (year - currentYear > 50) year -= 100
-        if (currentYear - year > 50) year += 100
+        // Fenêtre glissante GS1 (General Specifications, « Determination of
+        // century in dates ») sur l'écart AA - année courante :
+        //   de +51 à +99 -> siècle précédent ;
+        //   de -99 à -50 -> siècle suivant (borne -50 INCLUSE, la règle
+        //   n'est pas symétrique) ;
+        //   sinon        -> siècle courant.
+        val diff = year - currentYear
+        if (diff >= 51) year -= 100
+        if (diff <= -50) year += 100
 
         val cal = Calendar.getInstance()
         cal.clear()

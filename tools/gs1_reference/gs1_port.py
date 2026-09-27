@@ -43,9 +43,10 @@ def parse_expiry(yymmdd, today=None):
         return None
     cur = (today or date.today()).year
     year = (cur // 100) * 100 + yy
-    if year - cur > 50:
+    diff = year - cur
+    if diff >= 51:
         year -= 100
-    if cur - year > 50:
+    if diff <= -50:  # borne -50 incluse (regle GS1 asymetrique)
         year += 100
     last = calendar.monthrange(year, mm)[1]
     day = last if dd == 0 else min(dd, last)

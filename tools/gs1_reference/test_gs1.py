@@ -96,6 +96,11 @@ f11, w11 = parse(f"01{g}" + "4103012345678900" + "17271130")
 check("AI 410 lue sur 3+13", f11.get("410") == "3012345678900", str(f11))
 check("parsing non decale apres l'AI 410", f11.get("17") == "271130" and w11 == [], str(w11))
 
+print("\n=== 14. Siecle : bornes GS1 (+50 courant, -50 siecle suivant) ===")
+t2060 = date(2060, 1, 1)
+check("2060, aa=10 (ecart -50) -> 2110", parse_expiry("100101", t2060) == "2110-01-01", parse_expiry("100101", t2060))
+check("2060, aa=11 (ecart -49) -> 2011", parse_expiry("110101", t2060) == "2011-01-01", parse_expiry("110101", t2060))
+
 print("\n" + "=" * 50)
 print(f"RESULTAT : {ok} PASS / {fail} FAIL")
 raise SystemExit(1 if fail else 0)

@@ -136,6 +136,11 @@ class Gs1ParserTest {
         assertEquals("1977-01-01", Gs1Parser.parseExpiry("770101", year))
     }
 
+    @Test fun `fenetre du siecle, borne -50 dans le siecle suivant (regle GS1)`() {
+        assertEquals("2110-01-01", Gs1Parser.parseExpiry("100101", 2060))
+        assertEquals("2011-01-01", Gs1Parser.parseExpiry("110101", 2060))
+    }
+
     @Test fun `date illisible = remarque, pas rejet`() {
         val d = Gs1Parser.parse("01${gtin}17271399")
         assertTrue(d.isUsable)
