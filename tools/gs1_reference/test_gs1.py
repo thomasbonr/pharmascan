@@ -86,10 +86,11 @@ print("\n=== 11. AI 4 chiffres (poids 3103) ===")
 f9, w9 = parse(f"01{g}" + "3103000250")
 check("AI 3103 lue sur 4+6", f9.get("3103") == "000250", str(f9))
 
-print("\n" + "=" * 50)
-print(f"RESULTAT : {ok} PASS / {fail} FAIL")
-
 
 print("\n=== 12. Regression : lot trop long = GS manquant ===")
 f10, w10 = parse(f"01{g}" + "10" + "A"*25)
 check("lot >20 caracteres signale", len(f10.get("10","")) > 20)
+
+print("\n" + "=" * 50)
+print(f"RESULTAT : {ok} PASS / {fail} FAIL")
+raise SystemExit(1 if fail else 0)

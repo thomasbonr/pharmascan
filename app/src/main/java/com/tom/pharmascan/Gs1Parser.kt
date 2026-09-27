@@ -250,15 +250,21 @@ object Gs1Parser {
      * Règle GS1 : un jour à "00" signifie « fin du mois ». On renvoie donc le
      * dernier jour réel du mois (28/29/30/31 selon l'année), et pas le 1er.
      * Le siècle est déduit selon la règle GS1 (fenêtre glissante de 50 ans).
+     *
+     * [currentYear] n'est paramétrable que pour les tests : la règle du
+     * siècle dépend de l'année courante, et un test qui en dépend
+     * implicitement changerait de résultat avec le temps.
      */
-    fun parseExpiry(yymmdd: String): String? {
+    fun parseExpiry(
+        yymmdd: String,
+        currentYear: Int = Calendar.getInstance().get(Calendar.YEAR)
+    ): String? {
         if (yymmdd.length != 6 || !yymmdd.all { it.isDigit() }) return null
         val yy = yymmdd.substring(0, 2).toInt()
         val mm = yymmdd.substring(2, 4).toInt()
         val dd = yymmdd.substring(4, 6).toInt()
         if (mm !in 1..12 || dd !in 0..31) return null
 
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
         val currentCentury = (currentYear / 100) * 100
         var year = currentCentury + yy
         // Fenêtre glissante : une date > 50 ans dans le futur appartient au
