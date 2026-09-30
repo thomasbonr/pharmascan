@@ -500,6 +500,20 @@ private fun StatusCard(state: ScanUiState, onManualEntry: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
+            AnimatedVisibility(state.forceAddAction != null) {
+                Spacer(Modifier.height(6.dp))
+                FilledTonalButton(
+                    onClick = {
+                        state.forceAddAction?.invoke()
+                        state.forceAddAction = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Ajouter quand même")
+                }
+            }
+
             FilledTonalButton(
                 onClick = onManualEntry,
                 modifier = Modifier.fillMaxWidth(),

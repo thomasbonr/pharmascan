@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.tom.pharmascan.Gs1Parser
+import com.tom.pharmascan.frenchDate
 
 /**
  * Repli manuel, indispensable quand le DataMatrix est abîmé, effacé, ou que la
@@ -119,12 +120,18 @@ private fun parseManualExpiry(input: String): String? {
     val d = input.filter { it.isDigit() }
     return when (d.length) {
         4 -> Gs1Parser.parseExpiry(d.substring(2) + d.substring(0, 2) + "00")   // MMAA
-        6 -> Gs1Parser.parseExpiry(d.substring(4) + d.substring(0, 2) + "00")   // MMAAAA
+        6 -> {
+            val first4 = d.substring(0, 4).toIntOrNull() ?: 0
+            if (first4 >= 2000) {
+                // AAAAMM (ex. "202711")
+                Gs1Parser.parseExpiry(d.substring(2, 4) + d.substring(4, 6) + "00")
+            } else {
+                // MMAAAA (ex. "112027")
+                Gs1Parser.parseExpiry(d.substring(4) + d.substring(0, 2) + "00")
+            }
+        }
         else -> null
     }
 }
 
-private fun frenchDate(iso: String): String {
-    val p = iso.split("-")
-    return if (p.size == 3) "${p[2]}/${p[1]}/${p[0]}" else iso
-}
+

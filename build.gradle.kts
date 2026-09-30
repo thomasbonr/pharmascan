@@ -1,7 +1,8 @@
 // Build racine du projet.
-// La version du plugin Kotlin doit rester cohérente avec
-// composeOptions.kotlinCompilerExtensionVersion dans app/build.gradle.kts.
+// Depuis Kotlin 2.0, le compilateur Compose est un plugin Gradle versionné
+// avec Kotlin : les deux plugins ci-dessous doivent garder la MÊME version.
 plugins {
     id("com.android.application") version "8.5.0" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+    id("org.jetbrains.kotlin.android") version "2.3.21" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
 }

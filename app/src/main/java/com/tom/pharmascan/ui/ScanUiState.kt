@@ -45,6 +45,9 @@ class ScanUiState {
     /** Historique de la session courante, le plus récent en tête. */
     val recent = mutableStateListOf<ScanEntry>()
 
+    /** Action en attente pour forcer l'ajout d'un doublon. */
+    var forceAddAction by mutableStateOf<(() -> Unit)?>(null)
+
     data class ScanEntry(
         val name: String,
         val expiry: String?,

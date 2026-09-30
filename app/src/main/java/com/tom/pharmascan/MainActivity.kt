@@ -12,7 +12,6 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.media.AudioManager
-import android.media.Image
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
@@ -30,11 +29,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
-import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -49,12 +46,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.barcode.BarcodeScanner
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.ZoomSuggestionOptions
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
+import com.tom.pharmascan.scan.FrameScanner
+import com.tom.pharmascan.scan.ScannerFactory
+import com.tom.pharmascan.scan.ZoomHooks
 import com.tom.pharmascan.ui.ManualEntryDialog
 import com.tom.pharmascan.ui.PharmaScanTheme
 import com.tom.pharmascan.ui.ScanUiState
@@ -115,7 +109,8 @@ import java.util.concurrent.TimeUnit
  *     (sur beaucoup de Samsung, l'ultra grand-angle est à FOCUS FIXE :
  *     le sélectionner supprimerait purement et simplement l'autofocus).
  *  4. RÉSOLUTION D'ANALYSE relevée à 1920x1080 via ResolutionSelector.
- *  5. AUTO-ZOOM ML KIT (ZoomSuggestionOptions), désactivable : compense un
+ *  5. AUTO-ZOOM (ML Kit : ZoomSuggestionOptions ; zxing : reconstruit à partir
+ *     de la taille du code dans l'image), désactivable : compense un
  *     code trop petit dans le cadre, sans effet sur la mise au point.
  *  6. TAP-TO-FOCUS et PINCH-TO-ZOOM, avec auto-annulation courte pour
  *     repasser rapidement en AF continu.
@@ -123,12 +118,11 @@ import java.util.concurrent.TimeUnit
  * S'y ajoute la CONFIRMATION MULTI-FRAMES recommandée par Google : deux
  * lectures identiques consécutives exigées avant validation.
  *
- * ORDRE D'INITIALISATION — attention : le scanner ML Kit doit être construit
- * APRÈS le binding de la caméra, car ZoomSuggestionOptions a besoin du
+ * ORDRE D'INITIALISATION — attention : le scanner doit être construit
+ * APRÈS le binding de la caméra, car l'auto-zoom (ML Kit) a besoin du
  * facteur de zoom maximal réel de l'appareil. Le construire avant plafonne
  * l'auto-zoom à 1.0x et le rend totalement inopérant.
  */
-@ExperimentalGetImage
 class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: Prefs
@@ -139,7 +133,7 @@ class MainActivity : ComponentActivity() {
 
     private var previewView: PreviewView? = null
     private var camera: Camera? = null
-    private var scanner: BarcodeScanner? = null
+    private var scanner: FrameScanner? = null
 
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var workExecutor: ExecutorService
@@ -149,8 +143,8 @@ class MainActivity : ComponentActivity() {
     private var lastRawValue: String? = null
     private var consecutiveCount = 0
     @Volatile private var processing = false
-    private var lastDecodeTimestamp = 0L
-    private var lastLockOnTimestamp = 0L
+    @Volatile private var lastDecodeTimestamp = 0L
+    @Volatile private var lastLockOnTimestamp = 0L
 
     /** Dernier CONTROL_AF_STATE remonté par la session de capture (thread caméra). */
     @Volatile private var afState: Int? = null
@@ -159,9 +153,6 @@ class MainActivity : ComponentActivity() {
     private var lastAfRecovery = 0L
     private var activeCameraLabel = "?"
     private var lastInvertedTimestamp = 0L
-    /** Tampons réutilisés pour l'inversion, pour ne pas allouer à chaque image. */
-    private var invertedFrame: ByteArray? = null
-    private var invertedRow: ByteArray? = null
     /** Réglage d'objectif utilisé lors du dernier binding, pour détecter un changement. */
     private var boundWithMacroLens = false
 
@@ -190,6 +181,7 @@ class MainActivity : ComponentActivity() {
         prefs = Prefs(this)
         api = MedicamentApi(prefs)
         ha = HomeAssistant(prefs)
+        ha.nameResolver = { cip13 -> api.lookupBlocking(cip13).name }
         cameraExecutor = Executors.newSingleThreadExecutor()
         workExecutor = Executors.newFixedThreadPool(2)
 
@@ -333,7 +325,6 @@ class MainActivity : ComponentActivity() {
     // Caméra
     // ======================================================================
 
-    @OptIn(ExperimentalCamera2Interop::class)
     private fun bindCamera(view: PreviewView) {
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
@@ -410,7 +401,7 @@ class MainActivity : ComponentActivity() {
             }
 
             // ORDRE CRITIQUE : maxZoomRatio n'est connu qu'une fois la caméra
-            // liée. Le scanner ML Kit doit donc être construit ICI et pas
+            // liée. Le scanner doit donc être construit ICI et pas
             // avant, sinon l'auto-zoom est plafonné à 1.0x et ne sert à rien.
             maxZoomRatio = camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
             scanner?.close()
@@ -442,7 +433,6 @@ class MainActivity : ComponentActivity() {
      *  - CONTROL_AF_AVAILABLE_MODES doit contenir CONTINUOUS_PICTURE, sinon
      *    le mode continu qu'on force plus haut serait silencieusement ignoré.
      */
-    @OptIn(ExperimentalCamera2Interop::class)
     private fun selectCamera(provider: ProcessCameraProvider): CameraSelector {
         boundWithMacroLens = prefs.macroLensEnabled
         if (!prefs.macroLensEnabled) {
@@ -504,128 +494,49 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Scanner restreint au seul format DATA_MATRIX : cela accélère nettement
-     * la détection et supprime les faux positifs sur le code-barres EAN
-     * imprimé juste à côté sur la boîte.
+     * Construit le lecteur de la variante courante (ML Kit ou zxing-cpp, voir
+     * `ScannerFactory`). Il ne lit que le format DATA_MATRIX, ce qui accélère
+     * la détection et évite les faux positifs sur l'EAN imprimé à côté.
      *
-     * Le zoom automatique est optionnel (réglage utilisateur) : il ne
-     * corrige pas un problème de mise au point, seulement un code trop petit
-     * dans le cadre, et certains préfèrent le désactiver.
+     * Le zoom automatique est optionnel (réglage utilisateur) : il ne corrige
+     * pas un problème de mise au point, seulement un code trop petit dans le
+     * cadre.
      */
-    private fun buildScanner(): BarcodeScanner {
-        val builder = BarcodeScannerOptions.Builder()
-            .setBarcodeFormats(Barcode.FORMAT_DATA_MATRIX)
-
-        if (prefs.autoZoomEnabled) {
-            val zoomCallback = ZoomSuggestionOptions.ZoomCallback { ratio ->
-                val cam = camera ?: return@ZoomCallback false
-                cam.cameraControl.setZoomRatio(ratio.coerceIn(1f, maxZoomRatio))
-                lastLockOnTimestamp = System.currentTimeMillis()
-                mainHandler.post {
-                    state.lockingOn = true
-                    state.zoomRatio = ratio
+    private fun buildScanner(): FrameScanner {
+        val zoom = ZoomHooks(
+            maxZoomRatio = maxZoomRatio,
+            currentZoomRatio = { camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f },
+            applyZoom = { ratio ->
+                val cam = camera
+                if (cam == null) false else {
+                    cam.cameraControl.setZoomRatio(ratio.coerceIn(1f, maxZoomRatio))
+                    lastLockOnTimestamp = System.currentTimeMillis()
+                    mainHandler.post {
+                        state.lockingOn = true
+                        state.zoomRatio = ratio
+                    }
+                    true
                 }
-                true
-            }
-            builder.setZoomSuggestionOptions(
-                ZoomSuggestionOptions.Builder(zoomCallback)
-                    .setMaxSupportedZoomRatio(maxZoomRatio.coerceAtLeast(1f))
-                    .build()
-            )
-        }
-
-        return BarcodeScanning.getClient(builder.build())
+            },
+        )
+        return ScannerFactory.create(prefs.autoZoomEnabled, zoom)
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {
         val currentScanner = scanner
-        val mediaImage = imageProxy.image
-        if (currentScanner == null || mediaImage == null || processing) {
+        if (currentScanner == null || processing) {
             imageProxy.close()
             return
         }
-        val rotation = imageProxy.imageInfo.rotationDegrees
-
-        // Seconde chance pour les codes à polarité inversée (clair sur fond
-        // sombre), fréquents sur les emballages noirs. Préparée uniquement
-        // quand la lecture normale peine depuis un moment : recopier le plan
-        // de luminance à chaque image coûterait cher pour rien dans le cas
-        // courant. Doit être construite AVANT la fermeture de l'ImageProxy.
-        val invertedImage =
-            if (System.currentTimeMillis() - lastDecodeTimestamp > INVERT_AFTER_MS) {
-                buildInvertedImage(mediaImage, rotation)
-            } else {
-                null
-            }
-
-        val image = InputImage.fromMediaImage(mediaImage, rotation)
-        currentScanner.process(image)
-            .addOnSuccessListener { barcodes ->
-                val raw = barcodes.firstNotNullOfOrNull { it.rawValue }
-                if (raw != null) {
-                    onRawValue(raw, inverted = false)
-                } else if (invertedImage != null) {
-                    // L'image inversée est une copie indépendante : elle reste
-                    // valide après la fermeture de l'ImageProxy.
-                    currentScanner.process(invertedImage)
-                        .addOnSuccessListener { inv ->
-                            inv.firstNotNullOfOrNull { it.rawValue }
-                                ?.let { onRawValue(it, inverted = true) }
-                        }
-                        .addOnFailureListener { e -> Log.w(TAG, "Analyse inversée échouée", e) }
-                }
-            }
-            .addOnFailureListener { e -> Log.w(TAG, "Analyse échouée", e) }
-            .addOnCompleteListener { imageProxy.close() }
-    }
-
-    /**
-     * Construit une image en niveaux de gris inversée (255 - luminance) à
-     * partir du plan Y de la frame.
-     *
-     * Un DataMatrix pharmaceutique est normalement imprimé sombre sur fond
-     * clair. Sur les emballages noirs il est imprimé en clair sur fond
-     * sombre : le code est parfaitement net, mais ML Kit ne le décode pas,
-     * ses binariseurs supposant la polarité standard. Lui fournir la version
-     * inversée résout le cas sans rien changer au reste du pipeline.
-     *
-     * Seul le plan de luminance porte l'information utile à un lecteur de
-     * code : la chrominance est donc remplie de 128 (neutre), ce qui produit
-     * une image NV21 valide en niveaux de gris.
-     */
-    private fun buildInvertedImage(mediaImage: Image, rotation: Int): InputImage? {
-        return try {
-            val plane = mediaImage.planes[0]
-            val width = mediaImage.width
-            val height = mediaImage.height
-            val rowStride = plane.rowStride
-            val pixelStride = plane.pixelStride
-            val luma = plane.buffer
-
-            val ySize = width * height
-            val needed = ySize + ySize / 2
-            val out = invertedFrame?.takeIf { it.size == needed }
-                ?: ByteArray(needed).also { invertedFrame = it }
-            val row = invertedRow?.takeIf { it.size >= rowStride }
-                ?: ByteArray(rowStride).also { invertedRow = it }
-
-            var offset = 0
-            for (y in 0 until height) {
-                // Cast explicite : ByteBuffer.position(int) a un type de
-                // retour covariant depuis Java 9, ce qui rend l'appel
-                // ambigu à la compilation selon le JDK utilisé.
-                (luma as java.nio.Buffer).position(y * rowStride)
-                luma.get(row, 0, minOf(rowStride, luma.remaining()))
-                for (x in 0 until width) {
-                    out[offset++] = (255 - (row[x * pixelStride].toInt() and 0xFF)).toByte()
-                }
-            }
-            java.util.Arrays.fill(out, ySize, needed, NEUTRAL_CHROMA)
-
-            InputImage.fromByteArray(out, width, height, rotation, InputImage.IMAGE_FORMAT_NV21)
-        } catch (e: Exception) {
-            Log.w(TAG, "Inversion de l'image impossible", e)
-            null
+        // Lecture inversée (code clair sur fond sombre) seulement quand la
+        // lecture normale peine depuis un moment : dans le cas courant, elle
+        // coûterait cher pour rien.
+        val tryInverted = System.currentTimeMillis() - lastDecodeTimestamp > INVERT_AFTER_MS
+        // Les scanners rappellent depuis leur propre thread (thread caméra
+        // pour zxing, thread principal pour ML Kit) : on ramène tout sur le
+        // thread principal, où vit l'état de confirmation multi-frames.
+        currentScanner.analyze(imageProxy, tryInverted) { raw, inverted ->
+            mainHandler.post { onRawValue(raw, inverted) }
         }
     }
 
@@ -635,6 +546,9 @@ class MainActivity : ComponentActivity() {
      * identiques consécutives avant de valider.
      */
     private fun onRawValue(raw: String, inverted: Boolean) {
+        // Un résultat posté avant la validation d'un scan précédent peut
+        // arriver après : on l'ignore plutôt que de traiter deux fois.
+        if (processing) return
         lastDecodeTimestamp = System.currentTimeMillis()
         if (inverted) {
             lastInvertedTimestamp = lastDecodeTimestamp
@@ -793,10 +707,20 @@ class MainActivity : ComponentActivity() {
                 "Boîte déjà enregistrée",
                 "CIP $cip13 · lot ${data.lot ?: "non précisé"}"
             )
+            // Proposer un ajout forcé pour les boîtes sans numéro de série
+            // (deux boîtes identiques du même lot produisent la même clé).
+            if (data.serial == null) {
+                state.forceAddAction = { processScan(data, cip13, boxKey) }
+            }
             releaseAfterDelay()
             return
         }
 
+        state.forceAddAction = null
+        processScan(data, cip13, boxKey)
+    }
+
+    private fun processScan(data: Gs1Parser.Gs1Data, cip13: String, boxKey: String) {
         feedback(success = true)
         state.set(
             ScanUiState.Phase.PROCESSING,
@@ -826,7 +750,7 @@ class MainActivity : ComponentActivity() {
                 if (lookup.error != null) append("\n(nom non résolu : ${lookup.error})")
             }
 
-            val result = ha.sendBlocking(HomeAssistant.Item(label, data.expiryIso, description))
+            val result = ha.sendBlocking(HomeAssistant.Item(label, data.expiryIso, description, cip13))
 
             mainHandler.post {
                 val entryStatus = when (result) {
@@ -863,6 +787,12 @@ class MainActivity : ComponentActivity() {
                 )
                 refreshQueueBadge()
                 releaseAfterDelay()
+            }
+
+            // Vidange de la file en arrière-plan, sans bloquer le retour du résultat.
+            if (result is HomeAssistant.SendResult.Success) {
+                ha.flushQueueBlocking()
+                mainHandler.post { refreshQueueBadge() }
             }
         }
     }
@@ -980,10 +910,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun frenchDate(iso: String): String {
-        val p = iso.split("-")
-        return if (p.size == 3) "${p[2]}/${p[1]}/${p[0]}" else iso
-    }
+
 
     companion object {
         private const val TAG = "PharmaScan"
@@ -1009,7 +936,5 @@ class MainActivity : ComponentActivity() {
         private const val INVERT_AFTER_MS = 600L
         /** Durée d'affichage du badge « code inversé ». */
         private const val INVERTED_BADGE_MS = 2500L
-        /** Chrominance neutre d'une image NV21 en niveaux de gris. */
-        private const val NEUTRAL_CHROMA: Byte = 128.toByte()
     }
 }

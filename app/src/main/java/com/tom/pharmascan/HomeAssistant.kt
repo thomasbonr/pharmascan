@@ -21,23 +21,23 @@ import java.util.concurrent.locks.ReentrantLock
  * plus tard.
  */
 class HomeAssistant(private val prefs: Prefs) {
+    var nameResolver: ((String) -> String?)? = null
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
+    private val client = SharedHttpClient
 
     private val jsonType = "application/json".toMediaType()
 
     data class Item(
         val label: String,
         val dueDate: String?,
-        val description: String?
+        val description: String?,
+        val cip13: String? = null  // pour résolution différée des noms hors-ligne
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("label", label)
             put("dueDate", dueDate ?: JSONObject.NULL)
             put("description", description ?: JSONObject.NULL)
+            put("cip13", cip13 ?: JSONObject.NULL)
         }
 
         companion object {
@@ -46,7 +46,8 @@ class HomeAssistant(private val prefs: Prefs) {
                 // isNull() distingue proprement JSONObject.NULL d'une chaîne
                 // vide ; optString aurait renvoyé le littéral "null".
                 dueDate = if (o.isNull("dueDate")) null else o.getString("dueDate"),
-                description = if (o.isNull("description")) null else o.getString("description")
+                description = if (o.isNull("description")) null else o.getString("description"),
+                cip13 = if (o.isNull("cip13")) null else o.optString("cip13").ifBlank { null }
             )
         }
     }
@@ -133,10 +134,7 @@ class HomeAssistant(private val prefs: Prefs) {
         return try {
             val code = postItem(item)
             when {
-                code in 200..299 -> {
-                    flushQueueBlocking() // profite de la connexion retrouvée
-                    SendResult.Success
-                }
+                code in 200..299 -> SendResult.Success
                 code == 401 -> SendResult.Failed("Jeton refusé (401)")
                 code == 404 -> SendResult.Failed(
                     when (prefs.connectionMode) {
@@ -265,8 +263,17 @@ class HomeAssistant(private val prefs: Prefs) {
             val done = mutableListOf<Item>()
             var sent = 0
             for (item in snapshot) {
+                // Résolution différée : si le nom n'a pas pu être résolu hors-ligne,
+                // on retente maintenant que le réseau est peut-être disponible.
+                val resolvedItem = if (item.cip13 != null && item.label.startsWith("Médicament CIP")) {
+                    val resolvedName = nameResolver?.invoke(item.cip13)
+                    if (resolvedName != null) {
+                        item.copy(label = item.label.replace("Médicament CIP ${item.cip13}", resolvedName))
+                    } else item
+                } else item
+
                 val code = try {
-                    postItem(item)
+                    postItem(resolvedItem)
                 } catch (e: Exception) {
                     break // réseau toujours HS, on réessaiera
                 }

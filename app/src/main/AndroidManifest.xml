@@ -48,11 +48,5 @@
             android:parentActivityName=".MainActivity"
             android:theme="@style/Theme.PharmaScan" />
 
-        <!-- Télécharge le modèle DataMatrix à l'installation plutôt qu'au
-             premier scan : évite un premier lancement qui ne scanne rien. -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode" />
-
     </application>
 </manifest>

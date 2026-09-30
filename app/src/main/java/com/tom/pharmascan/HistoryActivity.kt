@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,6 +28,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -74,6 +78,7 @@ class HistoryActivity : ComponentActivity() {
                     entries = prefs.historyEntries(),
                     alertMonths = prefs.alertMonths,
                     onClear = { prefs.clearHistoryEntries() },
+                    onDelete = { prefs.removeHistoryEntry(it) },
                     onBack = { finish() }
                 )
             }
@@ -99,10 +104,7 @@ private fun expiryStatus(expiryIso: String?, alertMonths: Int): ExpiryStatus {
     return if (expiryIso <= cutoff) ExpiryStatus.SOON else ExpiryStatus.OK
 }
 
-private fun frenchDate(iso: String): String {
-    val p = iso.split("-")
-    return if (p.size == 3) "${p[2]}/${p[1]}/${p[0]}" else iso
-}
+
 
 private val scannedAtFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.FRANCE)
 
@@ -112,6 +114,7 @@ private fun HistoryScreen(
     entries: List<Prefs.HistoryEntry>,
     alertMonths: Int,
     onClear: () -> Unit,
+    onDelete: (Prefs.HistoryEntry) -> Unit,
     onBack: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -169,7 +172,34 @@ private fun HistoryScreen(
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(filtered, key = { "${it.scannedAt}_${it.cip13}" }) { entry ->
-                        HistoryRow(entry, expiryStatus(entry.expiryIso, alertMonths))
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = { value ->
+                                if (value != SwipeToDismissBoxValue.Settled) {
+                                    currentEntries = currentEntries.filter {
+                                        !(it.cip13 == entry.cip13 && it.scannedAt == entry.scannedAt)
+                                    }
+                                    onDelete(entry)
+                                    true
+                                } else false
+                            }
+                        )
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            backgroundContent = {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(vertical = 8.dp)
+                                        .background(StatusError.copy(alpha = 0.15f), MaterialTheme.shapes.medium)
+                                        .padding(horizontal = 20.dp),
+                                    contentAlignment = Alignment.CenterEnd
+                                ) {
+                                    Text("Supprimer", color = StatusError)
+                                }
+                            }
+                        ) {
+                            HistoryRow(entry, expiryStatus(entry.expiryIso, alertMonths))
+                        }
                         Spacer(Modifier.height(8.dp))
                     }
                 }

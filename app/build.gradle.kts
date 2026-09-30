@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         // 24 = minimum requis par CameraX et ML Kit.
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 8
+        versionName = "1.8"
     }
 
     buildTypes {
@@ -24,16 +25,18 @@ android {
         }
     }
 
-    buildFeatures {
-        compose = true
+    // Deux variantes, seule la bibliothèque de lecture des codes change :
+    //  - play   : ML Kit (propriétaire, meilleure détection) → Google Play ;
+    //  - fdroid : zxing-cpp (Apache 2.0) → F-Droid, qui refuse les blobs
+    //             propriétaires.
+    flavorDimensions += "dist"
+    productFlavors {
+        create("play") { dimension = "dist" }
+        create("fdroid") { dimension = "dist" }
     }
 
-    composeOptions {
-        // DOIT correspondre à la version du plugin Kotlin déclarée dans le
-        // build.gradle.kts racine. Table officielle :
-        // developer.android.com/jetpack/androidx/releases/compose-kotlin
-        // Ici : Kotlin 1.9.24 -> extension 1.5.14
-        kotlinCompilerExtensionVersion = "1.5.14"
+    buildFeatures {
+        compose = true
     }
 
     compileOptions {
@@ -41,16 +44,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs = freeCompilerArgs + listOf(
-            "-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop",
-            "-opt-in=androidx.camera.core.ExperimentalGetImage"
-        )
-    }
-
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        // API CameraX marquées expérimentales : Camera2Interop (autofocus
+        // continu forcé) et ImageProxy.image (lecture ML Kit).
+        freeCompilerArgs.addAll(
+            "-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop",
+            "-opt-in=androidx.camera.core.ExperimentalGetImage",
+        )
     }
 }
 
@@ -77,11 +84,18 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
 
-    // --- ML Kit ---
-    // 17.3.0 minimum : ZoomSuggestionOptions (auto-zoom) n'existe pas avant.
-    // Version "bundled" : le modèle est embarqué, donc le scan fonctionne dès
-    // le premier lancement et hors ligne. Compter ~3 Mo d'APK en plus.
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // --- Lecture des DataMatrix (une bibliothèque par variante) ---
+    // ML Kit 17.3.0 minimum : ZoomSuggestionOptions (auto-zoom) n'existe pas
+    // avant. Version "bundled" : le modèle est embarqué, donc le scan
+    // fonctionne dès le premier lancement et hors ligne (~3 Mo d'APK).
+    "playImplementation"("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // zxing-cpp tire camera-core 1.6.x en dépendance transitive, ce qui
+    // déséquilibrerait nos autres modules CameraX (1.3.x). Le wrapper n'utilise
+    // que l'API ImageProxy, présente dans 1.3.4 : on exclut donc la transitive.
+    "fdroidImplementation"("io.github.zxing-cpp:android:3.1.1") {
+        exclude(group = "androidx.camera")
+    }
 
     // --- Divers ---
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
@@ -89,4 +103,6 @@ dependencies {
 
     // --- Tests JVM (./gradlew testDebugUnitTest) ---
     testImplementation("junit:junit:4.13.2")
+    // org.json est un stub vide dans les tests JVM d'Android : on fournit la vraie.
+    testImplementation("org.json:json:20240303")
 }

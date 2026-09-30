@@ -1,12 +1,10 @@
 package com.tom.pharmascan
 
 import android.util.Log
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
-import java.util.concurrent.TimeUnit
 
 /**
  * Résolution CIP13 -> informations médicament via l'API Médicaments FR
@@ -24,10 +22,7 @@ import java.util.concurrent.TimeUnit
  */
 class MedicamentApi(private val prefs: Prefs) {
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .build()
+    private val client = SharedHttpClient
 
     data class Result(
         val name: String?,
@@ -127,67 +122,6 @@ class MedicamentApi(private val prefs: Prefs) {
     }
 
     /**
-     * Quantité par boîte, déduite du libellé de conditionnement.
-     *
-     * DEUX PIÈGES, tous deux mesurés sur un échantillon de 2019 présentations
-     * réelles de la BDPM — ne pas « simplifier » cette fonction sans refaire
-     * ces mesures :
-     *
-     *  1. L'API renvoie TOUTES les présentations du médicament, pas seulement
-     *     celle du CIP13 demandé (31 % des médicaments en ont plusieurs). Il
-     *     FAUT donc filtrer par cip13 : prendre la première donnerait « 100
-     *     comprimés » pour une boîte de 8 de Doliprane.
-     *
-     *  2. « 30 plaquette(s) ... de 1 comprimé(s) » = 30 comprimés, pas 1.
-     *     Ce motif à multiplicateur représente 14 % des formes solides : une
-     *     regex naïve se tromperait silencieusement sur une boîte sur sept.
-     *
-     * Couverture mesurée : 99,7 % des formes orales solides. En cas de doute,
-     * on renvoie null plutôt qu'un nombre approximatif — une quantité fausse
-     * dans une armoire à pharmacie est pire que pas de quantité du tout.
-     */
-    private fun extractQuantity(med: JSONObject, cip13: String, form: String?): String? {
-        // Les formes non solides (sirops, crèmes, solutions) se comptent en
-        // ml ou en g : un « nombre de comprimés » n'y a pas de sens.
-        val solidForm = form?.lowercase()?.let { f ->
-            SOLID_FORMS.any { f.contains(it) }
-        } ?: false
-        if (!solidForm) return null
-
-        val presentations = med.optJSONArray("presentation") ?: return null
-        val label = (0 until presentations.length())
-            .mapNotNull { presentations.optJSONObject(it) }
-            .firstOrNull { it.optString("cip13") == cip13 || it.optLong("cip13").toString() == cip13 }
-            ?.optString("libelle")
-            ?.takeIf { it.isNotBlank() }
-            ?: return null
-
-        // Minuscules d'abord : CASE_INSENSITIVE de Java ne replie pas les
-        // caractères accentués, « É » ne matcherait pas « é ».
-        val lower = label.lowercase()
-
-        // « de 10 x 1 gélule » ou « de (14 x 4 x 1) comprimés »
-        RE_PRODUCT.find(lower)?.let { m ->
-            val total = m.groupValues[1].split(*PRODUCT_SEPARATORS)
-                .mapNotNull { it.trim().toIntOrNull() }
-                .takeIf { it.isNotEmpty() }
-                ?.reduce { a, b -> a * b }
-            if (total != null) return format(total, m.groupValues[2])
-        }
-
-        val per = RE_PER_CONTAINER.find(lower) ?: return null
-        val count = per.groupValues[1].toIntOrNull() ?: return null
-        val multiplier = RE_MULTIPLIER.find(lower)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-        return format(count * multiplier, per.groupValues[2])
-    }
-
-    private fun format(count: Int, unit: String): String? {
-        if (count <= 0 || count > MAX_PLAUSIBLE_UNITS) return null
-        val plural = if (count > 1 && !unit.endsWith("s")) "${unit}s" else unit
-        return "$count $plural"
-    }
-
-    /**
      * Les dénominations BDPM sont verbeuses :
      * "DOLIPRANE 1000 mg, comprimé, boîte de 8" -> on garde une forme lisible
      * mais on coupe les mentions les plus longues pour tenir dans une ligne
@@ -216,7 +150,8 @@ class MedicamentApi(private val prefs: Prefs) {
         )
 
         private val SOLID_FORMS = listOf(
-            "comprim", "gélule", "gelule", "capsule", "dragée", "dragee", "pastille"
+            "comprim", "gélule", "gelule", "capsule", "dragée", "dragee", "pastille",
+            "suppositoire", "ovule", "sachet"
         )
 
         private const val UNIT = "(comprimé|comprime|gélule|gelule|capsule|dragée|dragee|pastille|suppositoire|ovule)"
@@ -226,7 +161,7 @@ class MedicamentApi(private val prefs: Prefs) {
 
         /** « 30 plaquette(s) ... » en tête -> multiplicateur de contenants. */
         private val RE_MULTIPLIER =
-            Regex("""^\s*(\d+)\s+(?:plaquette|pilulier|flacon|tube|film|étui|etui|boîte|boite|récipient|recipient|pot)""")
+            Regex("""^\s*(\d+)\s+(?:plaquette|pilulier|flacon|tube|film|étui|etui|boîte|boite|récipient|recipient|pot|sachet)""")
 
         /** « de 10 x 1 gélule », « de (14 x 4 x 1) comprimés ». */
         private val RE_PRODUCT = Regex("""\bde\s+\(?\s*(\d+(?:\s*[x×]\s*\d+)+)\s*\)?\s*$UNIT""")
@@ -240,5 +175,44 @@ class MedicamentApi(private val prefs: Prefs) {
          * rien afficher.
          */
         private const val MAX_PLAUSIBLE_UNITS = 1000
+
+        /**
+         * Quantité par boîte, déduite du libellé de conditionnement.
+         */
+        internal fun extractQuantity(med: JSONObject, cip13: String, form: String?): String? {
+            val solidForm = form?.lowercase()?.let { f ->
+                SOLID_FORMS.any { f.contains(it) }
+            } ?: false
+            if (!solidForm) return null
+
+            val presentations = med.optJSONArray("presentation") ?: return null
+            val label = (0 until presentations.length())
+                .mapNotNull { presentations.optJSONObject(it) }
+                .firstOrNull { it.optString("cip13") == cip13 || it.optLong("cip13").toString() == cip13 }
+                ?.optString("libelle")
+                ?.takeIf { it.isNotBlank() }
+                ?: return null
+
+            val lower = label.lowercase()
+
+            RE_PRODUCT.find(lower)?.let { m ->
+                val total = m.groupValues[1].split(*PRODUCT_SEPARATORS)
+                    .mapNotNull { it.trim().toIntOrNull() }
+                    .takeIf { it.isNotEmpty() }
+                    ?.reduce { a, b -> a * b }
+                if (total != null) return format(total, m.groupValues[2])
+            }
+
+            val per = RE_PER_CONTAINER.find(lower) ?: return null
+            val count = per.groupValues[1].toIntOrNull() ?: return null
+            val multiplier = RE_MULTIPLIER.find(lower)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            return format(count * multiplier, per.groupValues[2])
+        }
+
+        internal fun format(count: Int, unit: String): String? {
+            if (count <= 0 || count > MAX_PLAUSIBLE_UNITS) return null
+            val plural = if (count > 1 && !unit.endsWith("s")) "${unit}s" else unit
+            return "$count $plural"
+        }
     }
 }

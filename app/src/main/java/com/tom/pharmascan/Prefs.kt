@@ -155,18 +155,35 @@ class Prefs(context: Context) {
 
     // ---- Déduplication ---------------------------------------------------
 
-    fun isAlreadyScanned(boxKey: String): Boolean =
-        cache.getStringSet(KEY_SCANNED, emptySet())?.contains(boxKey) == true
+    fun isAlreadyScanned(boxKey: String): Boolean {
+        val list = readScannedList()
+        return list.contains(boxKey)
+    }
 
     fun rememberScanned(boxKey: String) {
-        val current = cache.getStringSet(KEY_SCANNED, emptySet())?.toMutableSet() ?: mutableSetOf()
-        current.add(boxKey)
-        // Borne la taille pour éviter une croissance infinie
-        val trimmed = if (current.size > 2000) current.toList().takeLast(1500).toSet() else current
-        cache.edit().putStringSet(KEY_SCANNED, trimmed).apply()
+        val list = readScannedList().toMutableList()
+        list.add(boxKey)
+        // Borne la taille en gardant les PLUS RÉCENTS (fin de la liste).
+        val trimmed = if (list.size > 2000) list.takeLast(1500) else list
+        cache.edit().putString(KEY_SCANNED, JSONArray(trimmed).toString()).apply()
     }
 
     fun clearScannedHistory() = cache.edit().remove(KEY_SCANNED).apply()
+
+    /** Lit la liste ordonnée de clés de déduplication. */
+    private fun readScannedList(): List<String> {
+        val raw = cache.getString(KEY_SCANNED, null) ?: return emptyList()
+        return try {
+            // Migration depuis l'ancien StringSet : si le JSON ne parse pas
+            // comme un tableau, on réinitialise.
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { arr.getString(it) }
+        } catch (e: Exception) {
+            // Ancien format StringSet ou données corrompues : on repart à zéro.
+            Log.w(TAG, "Migration de la liste de déduplication", e)
+            emptyList()
+        }
+    }
 
     // ---- Cache des libellés CIP13 -> nom ---------------------------------
 
@@ -225,6 +242,12 @@ class Prefs(context: Context) {
         val current = historyEntries().toMutableList()
         current.add(0, entry)
         saveHistoryEntries(if (current.size > 500) current.take(500) else current)
+    }
+
+    fun removeHistoryEntry(entry: HistoryEntry) {
+        val current = historyEntries().toMutableList()
+        current.removeAll { it.cip13 == entry.cip13 && it.scannedAt == entry.scannedAt }
+        saveHistoryEntries(current)
     }
 
     fun historyEntries(): List<HistoryEntry> {
