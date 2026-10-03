@@ -244,7 +244,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        if (!prefs.isConfigured) {
+        if (prefs.haEnabled && !prefs.isConfigured) {
             state.set(
                 ScanUiState.Phase.ERROR,
                 "Home Assistant non configuré",
@@ -741,10 +741,22 @@ class MainActivity : ComponentActivity() {
                 if (lookup.error != null) append("\n(nom non résolu : ${lookup.error})")
             }
 
-            val result = ha.sendBlocking(HomeAssistant.Item(label, data.expiryIso, description, cip13))
+            // null = Home Assistant désactivé : le scan reste purement local.
+            val result = if (prefs.haEnabled) {
+                ha.sendBlocking(HomeAssistant.Item(label, data.expiryIso, description, cip13))
+            } else null
 
             mainHandler.post {
                 val entryStatus = when (result) {
+                    null -> {
+                        prefs.rememberScanned(boxKey)
+                        recordHistory(cip13, name, data.lot, data.expiryIso)
+                        state.set(
+                            ScanUiState.Phase.SUCCESS, name,
+                            data.expiryIso?.let { "Périme le ${frenchDate(it)}" }
+                        )
+                        ScanUiState.EntryStatus.LOCAL
+                    }
                     is HomeAssistant.SendResult.Success -> {
                         prefs.rememberScanned(boxKey)
                         recordHistory(cip13, name, data.lot, data.expiryIso)
@@ -806,11 +818,16 @@ class MainActivity : ComponentActivity() {
                 append(name)
                 expiryIso?.let { append(" — périme le ${frenchDate(it)}") }
             }
-            val result = ha.sendBlocking(
-                HomeAssistant.Item(label, expiryIso, "CIP13 : $cip13 (saisie manuelle)")
-            )
+            val result = if (prefs.haEnabled) {
+                ha.sendBlocking(HomeAssistant.Item(label, expiryIso, "CIP13 : $cip13 (saisie manuelle)"))
+            } else null
             mainHandler.post {
                 val entryStatus = when (result) {
+                    null -> {
+                        recordHistory(cip13, name, lot = null, expiryIso)
+                        state.set(ScanUiState.Phase.SUCCESS, name, "Ajouté à l'historique")
+                        ScanUiState.EntryStatus.LOCAL
+                    }
                     is HomeAssistant.SendResult.Success -> {
                         recordHistory(cip13, name, lot = null, expiryIso)
                         state.set(ScanUiState.Phase.SUCCESS, name, "Ajouté à Home Assistant")
@@ -842,6 +859,7 @@ class MainActivity : ComponentActivity() {
     // ======================================================================
 
     private fun flushQueue(announceEmpty: Boolean) {
+        if (!prefs.haEnabled) return
         runInBackground {
             val before = ha.queueSize()
             if (before == 0) {
@@ -863,6 +881,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshQueueBadge() {
+        if (!prefs.haEnabled) {
+            state.pendingCount = 0
+            return
+        }
         runInBackground {
             val size = ha.queueSize()
             mainHandler.post { state.pendingCount = size }

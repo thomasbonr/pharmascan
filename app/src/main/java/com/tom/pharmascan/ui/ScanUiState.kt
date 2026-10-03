@@ -55,7 +55,8 @@ class ScanUiState {
         val status: EntryStatus
     )
 
-    enum class EntryStatus { SENT, QUEUED, REJECTED }
+    /** SENT : envoyé à Home Assistant ; QUEUED : en file ; LOCAL : enregistré sans envoi. */
+    enum class EntryStatus { SENT, QUEUED, LOCAL, REJECTED }
 
     fun set(phase: Phase, headline: String, detail: String? = null) {
         this.phase = phase

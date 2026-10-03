@@ -95,7 +95,8 @@ class SettingsActivity : ComponentActivity() {
                         sound = prefs.soundEnabled,
                         autoZoom = prefs.autoZoomEnabled,
                         macroLens = prefs.macroLensEnabled,
-                        afDiagnostics = prefs.afDiagnosticsEnabled
+                        afDiagnostics = prefs.afDiagnosticsEnabled,
+                        haEnabled = prefs.haEnabled
                     ),
                     onSave = { form ->
                         prefs.haUrl = form.url
@@ -108,6 +109,7 @@ class SettingsActivity : ComponentActivity() {
                         prefs.autoZoomEnabled = form.autoZoom
                         prefs.macroLensEnabled = form.macroLens
                         prefs.afDiagnosticsEnabled = form.afDiagnostics
+                        prefs.haEnabled = form.haEnabled
                     },
                     onTest = { callback ->
                         executor.execute {
@@ -142,7 +144,8 @@ private data class SettingsForm(
     val sound: Boolean,
     val autoZoom: Boolean,
     val macroLens: Boolean,
-    val afDiagnostics: Boolean
+    val afDiagnostics: Boolean,
+    val haEnabled: Boolean
 )
 
 /** Secret du webhook : 32 caractères tirés d'un générateur cryptographique. */
@@ -211,6 +214,7 @@ private fun SettingsScreen(
     var autoZoom by remember { mutableStateOf(initial.autoZoom) }
     var macroLens by remember { mutableStateOf(initial.macroLens) }
     var afDiagnostics by remember { mutableStateOf(initial.afDiagnostics) }
+    var haEnabled by remember { mutableStateOf(initial.haEnabled) }
 
     var secretVisible by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -226,7 +230,8 @@ private fun SettingsScreen(
         sound = sound,
         autoZoom = autoZoom,
         macroLens = macroLens,
-        afDiagnostics = afDiagnostics
+        afDiagnostics = afDiagnostics,
+        haEnabled = haEnabled
     )
 
     val canTest = url.isNotBlank() &&
@@ -254,179 +259,6 @@ private fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp)
         ) {
-            SectionTitle("Connexion Home Assistant")
-
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it; testResult = null },
-                label = { Text("URL de l'instance") },
-                placeholder = { Text("http://192.168.1.42:8123") },
-                singleLine = true,
-                supportingText = {
-                    Text("Sans slash final. Adresse locale, Tailscale, ou domaine derrière ton reverse proxy.")
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(Modifier.height(16.dp))
-
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Utiliser un webhook", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Recommandé. Un webhook ne peut déclencher qu'une seule " +
-                            "automatisation : au pire, quelqu'un ajoute des lignes à ta liste " +
-                            "de pharmacie. Un jeton longue durée, lui, donne TOUS les droits " +
-                            "du compte qui l'a créé — serrures, alarme, caméras, configuration.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = useWebhook,
-                    onCheckedChange = { useWebhook = it; testResult = null }
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            if (useWebhook) {
-                OutlinedTextField(
-                    value = webhookId,
-                    onValueChange = { webhookId = it.trim(); testResult = null },
-                    label = { Text("Identifiant du webhook") },
-                    singleLine = true,
-                    visualTransformation = if (secretVisible) VisualTransformation.None
-                                           else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        Row {
-                            IconButton(onClick = { secretVisible = !secretVisible }) {
-                                Icon(
-                                    if (secretVisible) Icons.Default.VisibilityOff
-                                    else Icons.Default.Visibility,
-                                    if (secretVisible) "Masquer" else "Afficher"
-                                )
-                            }
-                            IconButton(onClick = {
-                                webhookId = generateWebhookId()
-                                secretVisible = true
-                                testResult = null
-                            }) {
-                                Icon(Icons.Default.Refresh, "Générer un identifiant")
-                            }
-                        }
-                    },
-                    supportingText = {
-                        Text(
-                            "Génère-le ici (bouton ↻), puis colle-le dans l'automatisation " +
-                                "ci-dessous. C'est un secret : il tient lieu de mot de passe."
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = entity,
-                    onValueChange = { entity = it },
-                    label = { Text("Entité liste de tâches") },
-                    placeholder = { Text("todo.armoire_a_pharmacie") },
-                    singleLine = true,
-                    supportingText = {
-                        Text(
-                            "Sert uniquement à pré-remplir l'automatisation ci-dessous. " +
-                                "En mode webhook, l'appli ne l'envoie jamais : c'est " +
-                                "Home Assistant qui décide de la liste cible."
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(16.dp))
-                AutomationCard(buildAutomationYaml(webhookId, entity))
-            } else {
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it; testResult = null },
-                    label = { Text("Jeton d'accès longue durée") },
-                    singleLine = true,
-                    visualTransformation = if (secretVisible) VisualTransformation.None
-                                           else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { secretVisible = !secretVisible }) {
-                            Icon(
-                                if (secretVisible) Icons.Default.VisibilityOff
-                                else Icons.Default.Visibility,
-                                if (secretVisible) "Masquer" else "Afficher"
-                            )
-                        }
-                    },
-                    supportingText = {
-                        Text(
-                            "Profil > Sécurité > Jetons d'accès longue durée. Pense à le " +
-                                "générer depuis un compte NON-administrateur dédié : ça limite " +
-                                "les dégâts si le téléphone est compromis."
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = entity,
-                    onValueChange = { entity = it; testResult = null },
-                    label = { Text("Entité liste de tâches") },
-                    placeholder = { Text("todo.armoire_a_pharmacie") },
-                    singleLine = true,
-                    supportingText = {
-                        Text("Paramètres > Appareils et services > Liste de tâches locale, puis relève son entity_id.")
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = {
-                        // On enregistre d'abord, sinon on testerait les
-                        // anciennes valeurs.
-                        onSave(currentForm())
-                        testing = true
-                        testResult = null
-                        onTest { message ->
-                            testing = false
-                            testResult = message
-                        }
-                    },
-                    enabled = !testing && canTest,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    if (testing) {
-                        CircularProgressIndicator(
-                            Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text("Test...")
-                    } else {
-                        Text("Tester la connexion")
-                    }
-                }
-            }
-
-            testResult?.let { ResultBanner(it) }
-
             Spacer(Modifier.height(24.dp))
             SectionTitle("Comportement")
 
@@ -462,6 +294,200 @@ private fun SettingsScreen(
                     )
                 }
                 Switch(checked = autoZoom, onCheckedChange = { autoZoom = it })
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionTitle("Home Assistant")
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Envoyer les scans vers Home Assistant", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Optionnel. Désactivé, les scans sont simplement enregistrés dans " +
+                            "l'historique de l'appli, sans aucune connexion à un serveur.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = haEnabled, onCheckedChange = { haEnabled = it; testResult = null })
+            }
+
+            if (haEnabled) {
+                Spacer(Modifier.height(16.dp))
+
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it; testResult = null },
+                    label = { Text("URL de l'instance") },
+                    placeholder = { Text("http://192.168.1.42:8123") },
+                    singleLine = true,
+                    supportingText = {
+                        Text("Sans slash final. Adresse locale, Tailscale, ou domaine derrière ton reverse proxy.")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Utiliser un webhook", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "Recommandé. Un webhook ne peut déclencher qu'une seule " +
+                                "automatisation : au pire, quelqu'un ajoute des lignes à ta liste " +
+                                "de pharmacie. Un jeton longue durée, lui, donne TOUS les droits " +
+                                "du compte qui l'a créé — serrures, alarme, caméras, configuration.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = useWebhook,
+                        onCheckedChange = { useWebhook = it; testResult = null }
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                if (useWebhook) {
+                    OutlinedTextField(
+                        value = webhookId,
+                        onValueChange = { webhookId = it.trim(); testResult = null },
+                        label = { Text("Identifiant du webhook") },
+                        singleLine = true,
+                        visualTransformation = if (secretVisible) VisualTransformation.None
+                                               else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            Row {
+                                IconButton(onClick = { secretVisible = !secretVisible }) {
+                                    Icon(
+                                        if (secretVisible) Icons.Default.VisibilityOff
+                                        else Icons.Default.Visibility,
+                                        if (secretVisible) "Masquer" else "Afficher"
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    webhookId = generateWebhookId()
+                                    secretVisible = true
+                                    testResult = null
+                                }) {
+                                    Icon(Icons.Default.Refresh, "Générer un identifiant")
+                                }
+                            }
+                        },
+                        supportingText = {
+                            Text(
+                                "Génère-le ici (bouton ↻), puis colle-le dans l'automatisation " +
+                                    "ci-dessous. C'est un secret : il tient lieu de mot de passe."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = entity,
+                        onValueChange = { entity = it },
+                        label = { Text("Entité liste de tâches") },
+                        placeholder = { Text("todo.armoire_a_pharmacie") },
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                "Sert uniquement à pré-remplir l'automatisation ci-dessous. " +
+                                    "En mode webhook, l'appli ne l'envoie jamais : c'est " +
+                                    "Home Assistant qui décide de la liste cible."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+                    AutomationCard(buildAutomationYaml(webhookId, entity))
+                } else {
+                    OutlinedTextField(
+                        value = token,
+                        onValueChange = { token = it; testResult = null },
+                        label = { Text("Jeton d'accès longue durée") },
+                        singleLine = true,
+                        visualTransformation = if (secretVisible) VisualTransformation.None
+                                               else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { secretVisible = !secretVisible }) {
+                                Icon(
+                                    if (secretVisible) Icons.Default.VisibilityOff
+                                    else Icons.Default.Visibility,
+                                    if (secretVisible) "Masquer" else "Afficher"
+                                )
+                            }
+                        },
+                        supportingText = {
+                            Text(
+                                "Profil > Sécurité > Jetons d'accès longue durée. Pense à le " +
+                                    "générer depuis un compte NON-administrateur dédié : ça limite " +
+                                    "les dégâts si le téléphone est compromis."
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+
+                    OutlinedTextField(
+                        value = entity,
+                        onValueChange = { entity = it; testResult = null },
+                        label = { Text("Entité liste de tâches") },
+                        placeholder = { Text("todo.armoire_a_pharmacie") },
+                        singleLine = true,
+                        supportingText = {
+                            Text("Paramètres > Appareils et services > Liste de tâches locale, puis relève son entity_id.")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            // On enregistre d'abord, sinon on testerait les
+                            // anciennes valeurs.
+                            onSave(currentForm())
+                            testing = true
+                            testResult = null
+                            onTest { message ->
+                                testing = false
+                                testResult = message
+                            }
+                        },
+                        enabled = !testing && canTest,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (testing) {
+                            CircularProgressIndicator(
+                                Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text("Test...")
+                        } else {
+                            Text("Tester la connexion")
+                        }
+                    }
+                }
+
+                testResult?.let { ResultBanner(it) }
             }
 
             Spacer(Modifier.height(24.dp))

@@ -302,7 +302,8 @@ private fun TopBar(
         AnimatedVisibility(state.sessionCount > 0, enter = fadeIn(), exit = fadeOut()) {
             GlassChip(
                 text = "${state.sessionCount} scannée${if (state.sessionCount > 1) "s" else ""}",
-                tint = StatusSuccess
+                tint = StatusSuccess,
+                onClick = onOpenHistory
             )
         }
 
@@ -543,7 +544,7 @@ private fun RecentList(state: ScanUiState) {
 @Composable
 private fun RecentRow(entry: ScanUiState.ScanEntry) {
     val tint = when (entry.status) {
-        ScanUiState.EntryStatus.SENT -> StatusSuccess
+        ScanUiState.EntryStatus.SENT, ScanUiState.EntryStatus.LOCAL -> StatusSuccess
         ScanUiState.EntryStatus.QUEUED -> StatusWarning
         ScanUiState.EntryStatus.REJECTED -> StatusError
     }

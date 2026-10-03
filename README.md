@@ -1,29 +1,31 @@
 # PharmaScan
 
-Scanner Android pour armoire à pharmacie : on vise le DataMatrix d'une boîte, l'appli en extrait CIP13, lot et péremption, résout le nom via la base publique des médicaments (BDPM) et l'ajoute à une liste Home Assistant, la péremption servant d'échéance.
+Scanner Android pour armoire à pharmacie : on vise le DataMatrix d'une boîte, l'appli en extrait CIP13, lot et péremption, résout le nom via la base publique des médicaments (BDPM) et l'enregistre dans un **historique local** consultable (recherche, péremptions colorées). En option, il peut aussi l'envoyer vers une liste Home Assistant, la péremption servant d'échéance.
 
-Un scan = un geste. Pas de compte, pas de cloud tiers, **100 % logiciel libre** (aucun composant Google propriétaire).
+Un scan = un geste. Pas de compte, pas de cloud, **100 % logiciel libre** (aucun composant Google propriétaire).
 
 ## Fonctionnalités
 
 - **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), confirmation sur deux images, auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
 - **Données enrichies** : nom, forme, quantité et conditions de délivrance (BDPM).
 - **GS1 rigoureux** : AI 01, 10, 17, 21, clé de contrôle GTIN vérifiée.
-- **Hors ligne** : les scans sont mis en file d'attente puis synchronisés au retour du réseau.
-- **Vie privée** : connexion par webhook limité à l'ajout dans la liste, sans accès complet à Home Assistant.
+- **Historique local** : chaque boîte scannée est conservée sur le téléphone (bouton ⏱ de l'écran de scan), avec recherche, suppression par balayage et alerte de péremption proche.
+- **Home Assistant optionnel** : désactivé par défaut, activable dans *Réglages → Home Assistant*. Hors ligne, les envois sont mis en file puis synchronisés au retour du réseau. Connexion par webhook limité à l'ajout dans la liste, sans accès complet à Home Assistant.
 - **Léger** : ~5 Mo (R8, ABI ARM uniquement).
 
 ## Compilation
 
 Kotlin / Jetpack Compose, SDK min 24, cible 34, JDK 17.
 
-1. Si Home Assistant est en HTTP, renseignez son adresse exacte dans `app/src/main/res/xml/network_security_config.xml` (inutile en HTTPS).
+1. Seulement si vous utilisez Home Assistant en HTTP, renseignez son adresse exacte dans `app/src/main/res/xml/network_security_config.xml` (inutile en HTTPS).
 2. `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
    (ou `./gradlew installDebug` pour installer directement).
 
 Le décodage repose sur [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) (Apache 2.0).
 
-## Configuration Home Assistant
+## Configuration Home Assistant (optionnelle)
+
+À n'utiliser que si vous activez *Réglages → Home Assistant*.
 
 ### Étape 1 : Créer la liste
 Dans HA, ajoutez une intégration **Liste de tâches locale** nommée "Armoire à pharmacie". Récupérez son `entity_id` (ex. `todo.armoire_a_pharmacie`).

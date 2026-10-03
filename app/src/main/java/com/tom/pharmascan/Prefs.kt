@@ -62,6 +62,19 @@ class Prefs(context: Context) {
 
     // ---- Réglages Home Assistant ----------------------------------------
 
+    /**
+     * Home Assistant est une fonctionnalité optionnelle : l'appli sert d'abord
+     * à scanner et à tenir l'historique de l'armoire, en local.
+     *
+     * Sans valeur enregistrée (mise à jour depuis une version antérieure), on
+     * reste actif si une URL était déjà saisie, pour ne pas couper l'envoi
+     * des installations existantes. Une nouvelle installation démarre inactive.
+     */
+    var haEnabled: Boolean
+        get() = if (prefs.contains(KEY_HA_ENABLED)) prefs.getBoolean(KEY_HA_ENABLED, false)
+                else haUrl.isNotBlank()
+        set(v) = prefs.edit().putBoolean(KEY_HA_ENABLED, v).apply()
+
     var haUrl: String
         get() = prefs.getString(KEY_URL, "") ?: ""
         set(v) = prefs.edit().putString(KEY_URL, v.trim().trimEnd('/')).apply()
@@ -288,6 +301,7 @@ class Prefs(context: Context) {
 
     companion object {
         private const val TAG = "PharmaScan/Prefs"
+        private const val KEY_HA_ENABLED = "ha_enabled"
         private const val KEY_URL = "ha_url"
         private const val KEY_TOKEN = "ha_token"
         private const val KEY_MODE = "connection_mode"
