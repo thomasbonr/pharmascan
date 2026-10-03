@@ -10,29 +10,28 @@ android {
 
     defaultConfig {
         applicationId = "com.tom.pharmascan"
-        // 24 = minimum requis par CameraX et ML Kit.
+        // 24 = minimum requis par CameraX.
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.8"
+        versionCode = 9
+        versionName = "1.9"
+
+        // zxing-cpp embarque une bibliothèque native par ABI (~1,5 Mo chacune) :
+        // on ne garde que les ABI des téléphones (x86 = émulateurs seulement).
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     buildTypes {
         release {
-            // Pas d'obfuscation : R8 sans règles adaptées casse la réflexion
-            // utilisée par ML Kit, et l'appli est personnelle.
-            isMinifyEnabled = false
+            // R8 : code mort retiré (material-icons-extended pèse des Mo
+            // sinon) et ressources inutilisées supprimées. zxing-cpp fournit
+            // sa propre règle keep pour la couche JNI.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Appli personnelle distribuée en APK : signée avec la clé de debug.
+            signingConfig = signingConfigs.getByName("debug")
         }
-    }
-
-    // Deux variantes, seule la bibliothèque de lecture des codes change :
-    //  - play   : ML Kit (propriétaire, meilleure détection) → Google Play ;
-    //  - fdroid : zxing-cpp (Apache 2.0) → F-Droid, qui refuse les blobs
-    //             propriétaires.
-    flavorDimensions += "dist"
-    productFlavors {
-        create("play") { dimension = "dist" }
-        create("fdroid") { dimension = "dist" }
     }
 
     buildFeatures {
@@ -53,7 +52,7 @@ kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         // API CameraX marquées expérimentales : Camera2Interop (autofocus
-        // continu forcé) et ImageProxy.image (lecture ML Kit).
+        // continu forcé) et ImageProxy.image.
         freeCompilerArgs.addAll(
             "-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop",
             "-opt-in=androidx.camera.core.ExperimentalGetImage",
@@ -84,16 +83,11 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
 
-    // --- Lecture des DataMatrix (une bibliothèque par variante) ---
-    // ML Kit 17.3.0 minimum : ZoomSuggestionOptions (auto-zoom) n'existe pas
-    // avant. Version "bundled" : le modèle est embarqué, donc le scan
-    // fonctionne dès le premier lancement et hors ligne (~3 Mo d'APK).
-    "playImplementation"("com.google.mlkit:barcode-scanning:17.3.0")
-
-    // zxing-cpp tire camera-core 1.6.x en dépendance transitive, ce qui
-    // déséquilibrerait nos autres modules CameraX (1.3.x). Le wrapper n'utilise
-    // que l'API ImageProxy, présente dans 1.3.4 : on exclut donc la transitive.
-    "fdroidImplementation"("io.github.zxing-cpp:android:3.1.1") {
+    // --- Lecture des DataMatrix : zxing-cpp (Apache 2.0, 100 % libre) ---
+    // Il tire camera-core 1.6.x en dépendance transitive, ce qui déséquilibrerait
+    // nos autres modules CameraX (1.3.x). Le wrapper n'utilise que l'API
+    // ImageProxy, présente dans 1.3.4 : on exclut donc la transitive.
+    implementation("io.github.zxing-cpp:android:3.1.1") {
         exclude(group = "androidx.camera")
     }
 

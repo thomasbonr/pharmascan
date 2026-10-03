@@ -1,6 +1,7 @@
 package com.tom.pharmascan.scan
 
 import android.graphics.Point
+import android.os.SystemClock
 import android.util.Log
 import androidx.camera.core.ImageProxy
 import zxingcpp.BarcodeReader
@@ -9,19 +10,30 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Scanner zxing-cpp (Apache 2.0), restreint au format DATA_MATRIX.
+ * Scanner zxing-cpp (Apache 2.0), restreint au format DATA_MATRIX : la
+ * détection est plus rapide et le code EAN imprimé à côté sur la boîte ne
+ * produit aucun faux positif.
  *
- * Différences avec ML Kit, compensées ici :
- *  - polarité inversée : gérée nativement par `tryInvert`, sans copier
- *    l'image. Elle double le coût de la lecture, donc n'est tentée que sur
- *    demande, et seulement après l'échec de la lecture normale ;
- *  - auto-zoom : zxing n'en a pas. On le reconstruit à partir de la position
- *    du code dans l'image (voir [suggestZoom]).
+ * Les lectures sont tentées en cascade, de la moins chère à la plus
+ * robuste ([Attempt]). La première, utilisée à chaque image, suffit dans le
+ * cas courant ; les suivantes ne sont tentées que lorsque le scan peine
+ * depuis un moment (`tryHarder` côté appelant), pour ne pas ralentir le flux.
+ *
+ * zxing n'a pas d'auto-zoom : on le reconstruit à partir de la position du
+ * code dans l'image (voir [suggestZoom]).
  */
 internal class ZxingFrameScanner(
     private val autoZoom: Boolean,
     private val zoom: ZoomHooks,
 ) : FrameScanner {
+
+    /** Une configuration de lecture. */
+    private class Attempt(
+        val label: String,
+        val binarizer: BarcodeReader.Binarizer,
+        val invert: Boolean = false,
+        val denoise: Boolean = false,
+    )
 
     private val reader = BarcodeReader(
         BarcodeReader.Options(
@@ -37,29 +49,30 @@ internal class ZxingFrameScanner(
         )
     )
 
+    @Volatile override var lastReadSummary: String? = null
+        private set
+
     private var lastZoomTimestamp = 0L
 
     override fun analyze(
         proxy: ImageProxy,
-        tryInverted: Boolean,
+        tryHarder: Boolean,
         onHit: (raw: String, inverted: Boolean) -> Unit,
     ) {
         try {
-            var inverted = false
-            var result = readFirst(proxy, invert = false)
-            if (result == null && tryInverted) {
-                // La lecture normale a échoué : si celle-ci réussit, c'est bien
-                // la polarité inversée qui a servi.
-                result = readFirst(proxy, invert = true)
-                inverted = result != null
-            }
-            if (result == null) return
+            val attempts = if (tryHarder) FULL_CASCADE else FAST
+            for (attempt in attempts) {
+                val started = SystemClock.elapsedRealtime()
+                val result = read(proxy, attempt) ?: continue
+                lastReadSummary = "${attempt.label} · ${SystemClock.elapsedRealtime() - started} ms"
 
-            if (autoZoom) {
-                val shortSide = min(proxy.cropRect.width(), proxy.cropRect.height())
-                suggestZoom(result.position, shortSide)
+                if (autoZoom) {
+                    val shortSide = min(proxy.cropRect.width(), proxy.cropRect.height())
+                    suggestZoom(result.position, shortSide)
+                }
+                onHit(result.text!!, attempt.invert)
+                return
             }
-            onHit(result.text!!, inverted)
         } catch (e: Exception) {
             Log.w(TAG, "Analyse échouée", e)
         } finally {
@@ -67,8 +80,10 @@ internal class ZxingFrameScanner(
         }
     }
 
-    private fun readFirst(proxy: ImageProxy, invert: Boolean): BarcodeReader.Result? {
-        reader.options.tryInvert = invert
+    private fun read(proxy: ImageProxy, attempt: Attempt): BarcodeReader.Result? {
+        reader.options.binarizer = attempt.binarizer
+        reader.options.tryInvert = attempt.invert
+        reader.options.tryDenoise = attempt.denoise
         return reader.read(proxy).firstOrNull { it.error == null && !it.text.isNullOrEmpty() }
     }
 
@@ -103,6 +118,30 @@ internal class ZxingFrameScanner(
 
     private companion object {
         const val TAG = "ZxingFrameScanner"
+
+        /**
+         * Lecture ordinaire : binarisation locale, qui encaisse un éclairage
+         * inégal (reflets sur blister ou boîte vernie).
+         */
+        private val NORMAL = Attempt("normal", BarcodeReader.Binarizer.LOCAL_AVERAGE)
+
+        val FAST = listOf(NORMAL)
+
+        /**
+         * Quand le scan peine, on élargit : binarisation globale (meilleure
+         * sur un code très petit et uniformément éclairé), puis polarité
+         * inversée (code clair sur fond sombre, fréquent sur les emballages
+         * noirs), puis débruitage (image grainée en basse lumière). Chaque
+         * étape double à peu près le coût de l'image.
+         */
+        val FULL_CASCADE = listOf(
+            NORMAL,
+            Attempt("histogramme global", BarcodeReader.Binarizer.GLOBAL_HISTOGRAM),
+            Attempt("inversé", BarcodeReader.Binarizer.LOCAL_AVERAGE, invert = true),
+            Attempt("débruité", BarcodeReader.Binarizer.LOCAL_AVERAGE, denoise = true),
+            Attempt("inversé + débruité", BarcodeReader.Binarizer.LOCAL_AVERAGE, invert = true, denoise = true),
+        )
+
         /** En dessous de cette part du petit côté du cadre, on zoome. */
         const val MIN_FILL = 0.18f
         /** Part visée du petit côté du cadre après zoom. */

@@ -109,7 +109,7 @@ class Prefs(context: Context) {
         set(v) = prefs.edit().putBoolean(KEY_SOUND, v).apply()
 
     /**
-     * Zoom automatique ML Kit (ZoomSuggestionOptions). Utile quand le code
+     * Zoom automatique. Utile quand le code
      * est détecté mais trop petit dans le cadre ; sans effet sur la mise au
      * point elle-même — désactivable si le changement de zoom perturbe plus
      * qu'il n'aide sur un appareil donné.

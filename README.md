@@ -1,27 +1,27 @@
 # PharmaScan
 
-Scanner Android pour armoire à pharmacie. On vise le DataMatrix d'une boîte de médicament, l'appli en extrait le CIP13, le lot et la date de péremption, résout le nom via la base publique des médicaments, et pousse le tout dans une liste Home Assistant avec la péremption comme échéance. 
+Scanner Android pour armoire à pharmacie : on vise le DataMatrix d'une boîte, l'appli en extrait CIP13, lot et péremption, résout le nom via la base publique des médicaments (BDPM) et l'ajoute à une liste Home Assistant, la péremption servant d'échéance.
 
-Un scan = un geste. Pas de saisie, pas de compte, pas de cloud tiers.
+Un scan = un geste. Pas de compte, pas de cloud tiers, **100 % logiciel libre** (aucun composant Google propriétaire).
 
 ## Fonctionnalités
 
-- **Scan automatique** : Détection du DataMatrix (ignore les codes EAN), auto-zoom, torche, tap-to-focus. Supporte les emballages sombres à codes inversés.
-- **Enrichissement des données** : Nom, forme, quantité (ex. "8 comprimés") et conditions de délivrance via l'API Médicaments FR (BDPM).
-- **Fiabilité GS1** : Décodage complet des identifiants (AI 01, 10, 17, 21), vérification de clé de contrôle GTIN, robustesse.
-- **Fonctionnement hors-ligne** : Scans mis en file d'attente locale et synchronisés au retour du réseau. 
-- **Sécurité et respect de la vie privée** : Communication par Webhook restreint sans donner les accès totaux à Home Assistant, données privées.
+- **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), confirmation sur deux images, auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
+- **Données enrichies** : nom, forme, quantité et conditions de délivrance (BDPM).
+- **GS1 rigoureux** : AI 01, 10, 17, 21, clé de contrôle GTIN vérifiée.
+- **Hors ligne** : les scans sont mis en file d'attente puis synchronisés au retour du réseau.
+- **Vie privée** : connexion par webhook limité à l'ajout dans la liste, sans accès complet à Home Assistant.
+- **Léger** : ~5 Mo (R8, ABI ARM uniquement).
 
-## Installation et Compilation
+## Compilation
 
-L'application est développée en Kotlin / Jetpack Compose.
-Pour l'installer via Android Studio (SDK min : 24, cible : 34) :
+Kotlin / Jetpack Compose, SDK min 24, cible 34, JDK 17.
 
-1. Clonez le dépôt et ouvrez-le avec Android Studio.
-2. Éditez le fichier `app/src/main/res/xml/network_security_config.xml` pour renseigner l'adresse **exacte** (IP locale) de votre Home Assistant. (Si accès via HTTPS complet, vous pouvez supprimer cette étape).
-3. Construisez et installez sur votre téléphone :
-   - `./gradlew installFdroidDebug` : variante 100 % logiciel libre (lecture des codes par zxing-cpp) ;
-   - `./gradlew installPlayDebug` : variante Google Play (lecture par ML Kit, meilleure détection).
+1. Si Home Assistant est en HTTP, renseignez son adresse exacte dans `app/src/main/res/xml/network_security_config.xml` (inutile en HTTPS).
+2. `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
+   (ou `./gradlew installDebug` pour installer directement).
+
+Le décodage repose sur [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) (Apache 2.0).
 
 ## Configuration Home Assistant
 
@@ -57,23 +57,24 @@ max: 25
 
 *Mode Jeton : Il est possible d'utiliser un Jeton d'accès (Token) généré dans HA, mais ce mode est peu sécurisé car il donne accès à tous les privilèges du compte créateur.*
 
-## Utilisation et Détection du Focus
+## Utilisation
 
-- Ouvrez l'application, approchez la boîte à 8-12 cm, ciblez le carré du DataMatrix. L'application scanne et bip.
-- Si le scan ne marche pas, **ne forcez pas l'autofocus répétitivement**. L'appli utilise le mode Continu de la caméra (CameraX).
-- **Diagnostics de focus** : Disponibles dans les paramètres pour comprendre si la caméra bloque sur la distance, si le contraste manque, ou si la mise au point cherche en boucle.
+Approchez la boîte à 8-12 cm et visez le DataMatrix : l'appli scanne et bipe. Ne forcez pas l'autofocus à répétition, il est déjà en mode continu.
 
-## Architecture 
+### Diagnostic
 
-- `MainActivity.kt` : Caméra, focus (gestion de Camera2Interop).
-- `scan/` : interface `FrameScanner` ; implémentations dans `src/play` (ML Kit) et `src/fdroid` (zxing-cpp).
-- `Gs1Parser.kt` : Décodage et validations standards GS1 (éprouvé par tests).
-- `MedicamentApi.kt` : Recherche BDPM. Transforme un CIP13 en nom et compte le nombre de comprimés.
-- `HomeAssistant.kt` : Interface de transport (Jetons & Webhook). File d'attente persistente.
-- Interface gérée en Jetpack Compose (Dossier `ui/`). 
+*Réglages → Diagnostic → Afficher le diagnostic* superpose à l'écran de scan : état de l'autofocus (cherche, net, verrouillé, échec), distance de mise au point, objectif utilisé et méthode/durée de la dernière lecture. Il permet de savoir si le problème vient de la caméra (flou, mauvais verrouillage) ou du décodage.
+
+## Architecture
+
+- `MainActivity.kt` : caméra et stratégie de mise au point (Camera2Interop).
+- `scan/` : `ZxingFrameScanner`, cascade de lectures et auto-zoom.
+- `diagnostic/` : état caméra/décodeur et son affichage.
+- `Gs1Parser.kt` : décodage et validation GS1 (testé).
+- `MedicamentApi.kt` : CIP13 → nom et quantité (BDPM).
+- `HomeAssistant.kt` : envoi (webhook ou jeton) et file d'attente persistante.
+- `ui/` : écrans Compose.
 
 ## Licence
-PharmaScan est un logiciel libre, distribué sous licence [GNU GPLv3](LICENSE).
-Le décodage respecte le format standard GS1-DataMatrix pour les médicaments.
 
-La variante `fdroid` n'utilise que des composants libres. La variante `play` embarque ML Kit (Google), propriétaire, qui n'est pas couvert par cette licence.
+[GNU GPLv3](LICENSE).

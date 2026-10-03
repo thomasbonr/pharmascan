@@ -26,7 +26,7 @@ class ScanUiState {
     var detail by mutableStateOf<String?>(null)
         private set
 
-    /** Vrai quand ML Kit voit un code mais n'arrive pas encore à le décoder. */
+    /** Vrai pendant que le zoom automatique se cale sur un code repéré. */
     var lockingOn by mutableStateOf(false)
 
     /** Vrai quand le dernier décodage a nécessité l'inversion (emballage sombre). */

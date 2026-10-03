@@ -46,8 +46,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.tom.pharmascan.diagnostic.DiagnosticSnapshot
+import com.tom.pharmascan.diagnostic.render
 import com.tom.pharmascan.scan.FrameScanner
-import com.tom.pharmascan.scan.ScannerFactory
+import com.tom.pharmascan.scan.ZxingFrameScanner
 import com.tom.pharmascan.scan.ZoomHooks
 import com.tom.pharmascan.ui.ManualEntryDialog
 import com.tom.pharmascan.ui.PharmaScanTheme
@@ -65,7 +67,7 @@ import java.util.concurrent.TimeUnit
  * STRATÉGIE DE MISE AU POINT
  * ------------------------------------------------------------------------
  * Un DataMatrix pharmaceutique fait 5 à 8 mm de côté pour ~50 modules par
- * ligne. ML Kit exige au minimum 2 pixels par module, soit ~100 px nets sur
+ * ligne. Un décodeur exige au minimum 2 pixels par module, soit ~100 px nets sur
  * le code. En résolution d'analyse par défaut (640x480) et à bout de bras,
  * on en obtient 30 à 40, flous : le scan ne marche jamais.
  *
@@ -109,8 +111,8 @@ import java.util.concurrent.TimeUnit
  *     (sur beaucoup de Samsung, l'ultra grand-angle est à FOCUS FIXE :
  *     le sélectionner supprimerait purement et simplement l'autofocus).
  *  4. RÉSOLUTION D'ANALYSE relevée à 1920x1080 via ResolutionSelector.
- *  5. AUTO-ZOOM (ML Kit : ZoomSuggestionOptions ; zxing : reconstruit à partir
- *     de la taille du code dans l'image), désactivable : compense un
+ *  5. AUTO-ZOOM (reconstruit à partir de la taille du code dans l'image),
+ *     désactivable : compense un
  *     code trop petit dans le cadre, sans effet sur la mise au point.
  *  6. TAP-TO-FOCUS et PINCH-TO-ZOOM, avec auto-annulation courte pour
  *     repasser rapidement en AF continu.
@@ -119,7 +121,7 @@ import java.util.concurrent.TimeUnit
  * lectures identiques consécutives exigées avant validation.
  *
  * ORDRE D'INITIALISATION — attention : le scanner doit être construit
- * APRÈS le binding de la caméra, car l'auto-zoom (ML Kit) a besoin du
+ * APRÈS le binding de la caméra, car l'auto-zoom a besoin du
  * facteur de zoom maximal réel de l'appareil. Le construire avant plafonne
  * l'auto-zoom à 1.0x et le rend totalement inopérant.
  */
@@ -494,9 +496,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Construit le lecteur de la variante courante (ML Kit ou zxing-cpp, voir
-     * `ScannerFactory`). Il ne lit que le format DATA_MATRIX, ce qui accélère
-     * la détection et évite les faux positifs sur l'EAN imprimé à côté.
+     * Construit le lecteur zxing-cpp. Il ne lit que le format DATA_MATRIX, ce
+     * qui accélère la détection et évite les faux positifs sur l'EAN imprimé
+     * à côté.
      *
      * Le zoom automatique est optionnel (réglage utilisateur) : il ne corrige
      * pas un problème de mise au point, seulement un code trop petit dans le
@@ -519,7 +521,7 @@ class MainActivity : ComponentActivity() {
                 }
             },
         )
-        return ScannerFactory.create(prefs.autoZoomEnabled, zoom)
+        return ZxingFrameScanner(prefs.autoZoomEnabled, zoom)
     }
 
     private fun analyzeFrame(imageProxy: ImageProxy) {
@@ -528,14 +530,13 @@ class MainActivity : ComponentActivity() {
             imageProxy.close()
             return
         }
-        // Lecture inversée (code clair sur fond sombre) seulement quand la
-        // lecture normale peine depuis un moment : dans le cas courant, elle
-        // coûterait cher pour rien.
-        val tryInverted = System.currentTimeMillis() - lastDecodeTimestamp > INVERT_AFTER_MS
-        // Les scanners rappellent depuis leur propre thread (thread caméra
-        // pour zxing, thread principal pour ML Kit) : on ramène tout sur le
+        // Lectures de secours (inversion, autre binarisation, débruitage)
+        // seulement quand la lecture normale peine depuis un moment : dans le
+        // cas courant, elles coûteraient cher pour rien.
+        val tryHarder = System.currentTimeMillis() - lastDecodeTimestamp > FALLBACK_AFTER_MS
+        // Le scanner rappelle depuis le thread caméra : on ramène tout sur le
         // thread principal, où vit l'état de confirmation multi-frames.
-        currentScanner.analyze(imageProxy, tryInverted) { raw, inverted ->
+        currentScanner.analyze(imageProxy, tryHarder) { raw, inverted ->
             mainHandler.post { onRawValue(raw, inverted) }
         }
     }
@@ -608,22 +609,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun updateDebugInfo() {
-        val afLabel = when (afState) {
-            CameraMetadata.CONTROL_AF_STATE_INACTIVE -> "inactif"
-            CameraMetadata.CONTROL_AF_STATE_PASSIVE_SCAN -> "recherche"
-            CameraMetadata.CONTROL_AF_STATE_PASSIVE_FOCUSED -> "net"
-            CameraMetadata.CONTROL_AF_STATE_ACTIVE_SCAN -> "recherche (tap)"
-            CameraMetadata.CONTROL_AF_STATE_FOCUSED_LOCKED -> "net (verrouillé)"
-            CameraMetadata.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED -> "ÉCHEC (verrouillé)"
-            CameraMetadata.CONTROL_AF_STATE_PASSIVE_UNFOCUSED -> "flou"
-            null -> "n/c"
-            else -> "état $afState"
-        }
-        // LENS_FOCUS_DISTANCE est en dioptries : 0 = infini.
-        val distance = lensFocusDistance?.let {
-            if (it <= 0f) "∞" else "${(1000f / it).toInt()} mm"
-        } ?: "?"
-        state.debugInfo = "AF $afLabel · $distance · $activeCameraLabel"
+        state.debugInfo = DiagnosticSnapshot(
+            afState = afState,
+            focusDistanceDiopters = lensFocusDistance,
+            cameraLabel = activeCameraLabel,
+            lastRead = scanner?.lastReadSummary,
+        ).render()
     }
 
     /**
@@ -929,11 +920,12 @@ class MainActivity : ComponentActivity() {
         /** Espacement minimal entre deux retours forcés à l'AF continu. */
         private const val AF_RECOVERY_INTERVAL_MS = 2500L
         /**
-         * Délai sans décodage avant de tenter aussi la lecture inversée.
-         * Court, pour ne pas faire attendre sur un emballage noir, mais non
-         * nul : dans le cas courant on n'alloue et ne recopie rien.
+         * Délai sans décodage avant d'essayer aussi les lectures de secours
+         * (inversée, autre binarisation, débruitée). Court, pour ne pas faire
+         * attendre sur un emballage noir, mais non nul : dans le cas courant
+         * elles doublent le coût de chaque image pour rien.
          */
-        private const val INVERT_AFTER_MS = 600L
+        private const val FALLBACK_AFTER_MS = 600L
         /** Durée d'affichage du badge « code inversé ». */
         private const val INVERTED_BADGE_MS = 2500L
     }

@@ -1,5 +1,7 @@
 package com.tom.pharmascan.ui
 
+import com.tom.pharmascan.diagnostic.DiagnosticOverlay
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -140,7 +142,7 @@ fun ScannerScreen(
                 .padding(top = 108.dp)
         )
 
-        AfDiagnostics(
+        DiagnosticOverlay(
             info = state.debugInfo,
             modifier = Modifier
                 .align(Alignment.TopCenter)
@@ -341,7 +343,7 @@ private fun TopBar(
 }
 
 /**
- * Affiché seulement au-delà de 1.1x. L'auto-zoom de ML Kit modifie le cadrage
+ * Affiché seulement au-delà de 1.1x. L'auto-zoom modifie le cadrage
  * sans action de l'utilisateur : sans ce repère, l'image « saute » de façon
  * inexplicable.
  */
@@ -354,26 +356,6 @@ private fun ZoomBadge(ratio: Float, modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.White,
                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-            )
-        }
-    }
-}
-
-/**
- * Diagnostic autofocus (réglage optionnel). Affiche l'état réel remonté par
- * la caméra : c'est ce qui permet de distinguer "l'AF cherche et n'accroche
- * pas" de "l'AF est verrouillé au mauvais endroit" sans brancher adb.
- */
-@Composable
-private fun AfDiagnostics(info: String?, modifier: Modifier = Modifier) {
-    AnimatedVisibility(info != null, modifier = modifier, enter = fadeIn(), exit = fadeOut()) {
-        Surface(color = Color.Black.copy(alpha = 0.6f), shape = RoundedCornerShape(50)) {
-            Text(
-                text = info.orEmpty(),
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
-                color = StatusWarning,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
             )
         }
     }

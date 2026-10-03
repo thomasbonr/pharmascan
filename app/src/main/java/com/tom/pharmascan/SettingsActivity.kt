@@ -485,18 +485,20 @@ private fun SettingsScreen(
                 Switch(checked = macroLens, onCheckedChange = { macroLens = it })
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(24.dp))
+            SectionTitle("Diagnostic")
 
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Diagnostic autofocus", style = MaterialTheme.typography.bodyLarge)
+                    Text("Afficher le diagnostic", style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Affiche l'état réel de l'autofocus et la distance de mise au point " +
-                            "sur l'écran de scan. Utile pour comprendre si la caméra cherche, " +
-                            "reste floue, ou se verrouille au mauvais endroit.",
+                        "Affiche sur l'écran de scan l'état réel de l'autofocus, la distance " +
+                            "de mise au point, l'objectif utilisé et la méthode de la dernière " +
+                            "lecture. Utile pour comprendre si la caméra cherche, reste floue, " +
+                            "se verrouille au mauvais endroit, ou si c'est le décodage qui échoue.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

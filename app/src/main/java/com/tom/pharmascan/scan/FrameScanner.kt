@@ -5,22 +5,24 @@ import androidx.camera.core.ImageProxy
 /**
  * Lecteur de DataMatrix appliqué aux images de la caméra.
  *
- * L'implémentation dépend de la variante de l'appli (voir `ScannerFactory`) :
- *  - `play`   : ML Kit (bibliothèque propriétaire Google) ;
- *  - `fdroid` : zxing-cpp (Apache 2.0), sans aucune dépendance propriétaire.
+ * Seule implémentation : [ZxingFrameScanner] (zxing-cpp, Apache 2.0). L'appli
+ * n'embarque aucune bibliothèque propriétaire.
  */
 interface FrameScanner : AutoCloseable {
+    /** Résumé de la dernière lecture réussie (stratégie, durée), pour le diagnostic. */
+    val lastReadSummary: String?
+
     /**
      * Analyse une image. L'implémentation prend possession de [proxy] et DOIT
      * le fermer, quel que soit le résultat.
      *
-     * @param tryInverted tenter aussi la lecture en polarité inversée (code
-     *   clair sur fond sombre). Plus coûteux, donc demandé seulement quand la
-     *   lecture normale peine depuis un moment.
+     * @param tryHarder tenter aussi les lectures de secours (polarité inversée,
+     *   autre binarisation, débruitage). Plus coûteux, donc demandé seulement
+     *   quand la lecture normale peine depuis un moment.
      * @param onHit appelé (depuis n'importe quel thread) avec le contenu brut
      *   du code et un indicateur « lu en polarité inversée ».
      */
-    fun analyze(proxy: ImageProxy, tryInverted: Boolean, onHit: (raw: String, inverted: Boolean) -> Unit)
+    fun analyze(proxy: ImageProxy, tryHarder: Boolean, onHit: (raw: String, inverted: Boolean) -> Unit)
 }
 
 /** Ce dont un scanner a besoin pour piloter le zoom de la caméra. */
