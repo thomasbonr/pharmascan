@@ -42,6 +42,11 @@ internal class ZxingFrameScanner(
             // payer quelques ms de plus par image.
             tryHarder = true,
             maxNumberOfSymbols = 1,
+            // Désactivés par défaut dans le wrapper Android. Sans rotation,
+            // seuls les codes orientés « à l'endroit » sont trouvés ; sans
+            // réduction, un code vu de près ou en diagonale est manqué.
+            tryRotate = true,
+            tryDownscale = true,
             // PLAIN : texte brut, où le FNC1 des DataMatrix GS1 est rendu par
             // le caractère GS (0x1D) attendu par Gs1Parser. Le mode par défaut
             // (HRI) produirait "(01)…(10)…", un format que le parseur ignore.
