@@ -559,7 +559,11 @@ class MainActivity : ComponentActivity() {
             lastRawValue = raw
             consecutiveCount = 1
         }
-        if (consecutiveCount < REQUIRED_CONSECUTIVE_READS) return
+        // Un DataMatrix décodé passe déjà la correction Reed-Solomon ; s'il
+        // donne en plus un GTIN au checksum valide, une seconde lecture
+        // n'apporte rien et ne ferait que retarder la validation.
+        val reliable = Gs1Parser.parse(raw).let { it.isUsable && it.lot != null && it.expiryIso != null }
+        if (!reliable && consecutiveCount < REQUIRED_CONSECUTIVE_READS) return
 
         consecutiveCount = 0
         lastRawValue = null
