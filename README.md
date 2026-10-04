@@ -6,7 +6,7 @@ Un scan = un geste. Pas de compte, pas de cloud, **100 % logiciel libre** (aucun
 
 ## Fonctionnalités
 
-- **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), confirmation sur deux images, auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
+- **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), validation dès la première lecture quand le code est complet (deux lectures sinon), auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
 - **Données enrichies** : nom, forme, quantité et conditions de délivrance (BDPM).
 - **GS1 rigoureux** : AI 01, 10, 17, 21, clé de contrôle GTIN vérifiée.
 - **Historique local** : chaque boîte scannée est conservée sur le téléphone (bouton ⏱ de l'écran de scan), avec recherche, suppression par balayage et alerte de péremption proche.

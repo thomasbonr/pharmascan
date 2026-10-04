@@ -13,8 +13,8 @@ android {
         // 24 = minimum requis par CameraX.
         minSdk = 24
         targetSdk = 34
-        versionCode = 10
-        versionName = "1.10"
+        versionCode = 11
+        versionName = "1.11"
 
         // zxing-cpp embarque une bibliothèque native par ABI (~1,5 Mo chacune) :
         // on ne garde que les ABI des téléphones (x86 = émulateurs seulement).
