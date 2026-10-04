@@ -47,6 +47,9 @@ internal class ZxingFrameScanner(
             // réduction, un code vu de près ou en diagonale est manqué.
             tryRotate = true,
             tryDownscale = true,
+            // Réduction par 2 plutôt que 3 (défaut) : mieux sur les petits
+            // codes, mesuré sur un jeu d'images synthétiques floues et bruitées.
+            downscaleFactor = 2,
             // PLAIN : texte brut, où le FNC1 des DataMatrix GS1 est rendu par
             // le caractère GS (0x1D) attendu par Gs1Parser. Le mode par défaut
             // (HRI) produirait "(01)…(10)…", un format que le parseur ignore.
@@ -133,17 +136,17 @@ internal class ZxingFrameScanner(
         val FAST = listOf(NORMAL)
 
         /**
-         * Quand le scan peine, on élargit : binarisation globale (meilleure
-         * sur un code très petit et uniformément éclairé), puis polarité
-         * inversée (code clair sur fond sombre, fréquent sur les emballages
-         * noirs), puis débruitage (image grainée en basse lumière). Chaque
-         * étape double à peu près le coût de l'image.
+         * Quand le scan peine, on élargit. Ordre choisi d'après le gain mesuré
+         * par étape : la polarité inversée (code clair sur fond sombre, fréquent
+         * sur les emballages noirs) apporte le plus ; la binarisation globale
+         * rattrape les petits codes uniformément éclairés ; le débruitage vient
+         * en dernier (image grainée en basse lumière). `invert` lit aussi la
+         * polarité normale, donc ces étapes englobent la lecture ordinaire.
          */
         val FULL_CASCADE = listOf(
             NORMAL,
-            Attempt("histogramme global", BarcodeReader.Binarizer.GLOBAL_HISTOGRAM),
             Attempt("inversé", BarcodeReader.Binarizer.LOCAL_AVERAGE, invert = true),
-            Attempt("débruité", BarcodeReader.Binarizer.LOCAL_AVERAGE, denoise = true),
+            Attempt("histogramme global", BarcodeReader.Binarizer.GLOBAL_HISTOGRAM, invert = true),
             Attempt("inversé + débruité", BarcodeReader.Binarizer.LOCAL_AVERAGE, invert = true, denoise = true),
         )
 
