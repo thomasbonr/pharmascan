@@ -251,16 +251,32 @@ class Prefs(context: Context) {
      * l'écran Historique, pas la déduplication (qui ne stocke qu'une clé
      * opaque). Le plus récent en tête. Bornée à 500 entrées.
      */
-    fun addHistoryEntry(entry: HistoryEntry) {
+    fun addHistoryEntry(entry: HistoryEntry) = synchronized(HISTORY_LOCK) {
         val current = historyEntries().toMutableList()
         current.add(0, entry)
         saveHistoryEntries(if (current.size > 500) current.take(500) else current)
     }
 
-    fun removeHistoryEntry(entry: HistoryEntry) {
+    fun removeHistoryEntry(entry: HistoryEntry) = synchronized(HISTORY_LOCK) {
         val current = historyEntries().toMutableList()
         current.removeAll { it.cip13 == entry.cip13 && it.scannedAt == entry.scannedAt }
         saveHistoryEntries(current)
+    }
+
+    /** CIP des entrées enregistrées hors ligne, encore sous leur nom provisoire. */
+    fun unresolvedHistoryCips(): Set<String> =
+        historyEntries().filter { it.name == placeholderName(it.cip13) }.map { it.cip13 }.toSet()
+
+    /**
+     * Donne son vrai nom aux entrées de ce CIP restées sous le nom provisoire
+     * (scan hors ligne). Renvoie true si au moins une entrée a changé.
+     */
+    fun renameUnresolvedHistory(cip13: String, name: String): Boolean = synchronized(HISTORY_LOCK) {
+        val placeholder = placeholderName(cip13)
+        val current = historyEntries()
+        if (current.none { it.cip13 == cip13 && it.name == placeholder }) return false
+        saveHistoryEntries(current.map { if (it.cip13 == cip13 && it.name == placeholder) it.copy(name = name) else it })
+        true
     }
 
     fun historyEntries(): List<HistoryEntry> {
@@ -283,7 +299,7 @@ class Prefs(context: Context) {
         }
     }
 
-    fun clearHistoryEntries() = cache.edit().remove(KEY_HISTORY).apply()
+    fun clearHistoryEntries() = synchronized(HISTORY_LOCK) { cache.edit().remove(KEY_HISTORY).apply() }
 
     private fun saveHistoryEntries(entries: List<HistoryEntry>) {
         val arr = JSONArray()
@@ -300,6 +316,12 @@ class Prefs(context: Context) {
     }
 
     companion object {
+        /** Nom affiché tant que la BDPM n'a pas pu être jointe (scan hors ligne). */
+        fun placeholderName(cip13: String) = "Médicament CIP $cip13"
+
+        /** Les écrans ont chacun leur Prefs : le verrou de l'historique est partagé. */
+        private val HISTORY_LOCK = Any()
+
         private const val TAG = "PharmaScan/Prefs"
         private const val KEY_HA_ENABLED = "ha_enabled"
         private const val KEY_URL = "ha_url"

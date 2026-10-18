@@ -725,7 +725,7 @@ class MainActivity : ComponentActivity() {
 
         runInBackground {
             val lookup = api.lookupBlocking(cip13)
-            val name = lookup.name ?: "Médicament CIP $cip13"
+            val name = lookup.name ?: Prefs.placeholderName(cip13)
 
             val label = buildString {
                 append(name)
@@ -817,7 +817,7 @@ class MainActivity : ComponentActivity() {
         state.set(ScanUiState.Phase.PROCESSING, "Saisie manuelle", "CIP $cip13")
         runInBackground {
             val lookup = api.lookupBlocking(cip13)
-            val name = lookup.name ?: "Médicament CIP $cip13"
+            val name = lookup.name ?: Prefs.placeholderName(cip13)
             val label = buildString {
                 append(name)
                 expiryIso?.let { append(" — périme le ${frenchDate(it)}") }

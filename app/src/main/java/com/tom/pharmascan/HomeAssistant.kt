@@ -265,10 +265,12 @@ class HomeAssistant(private val prefs: Prefs) {
             for (item in snapshot) {
                 // Résolution différée : si le nom n'a pas pu être résolu hors-ligne,
                 // on retente maintenant que le réseau est peut-être disponible.
-                val resolvedItem = if (item.cip13 != null && item.label.startsWith("Médicament CIP")) {
-                    val resolvedName = nameResolver?.invoke(item.cip13)
+                val cip13 = item.cip13
+                val placeholder = cip13?.let { Prefs.placeholderName(it) }
+                val resolvedItem = if (cip13 != null && placeholder != null && item.label.startsWith(placeholder)) {
+                    val resolvedName = nameResolver?.invoke(cip13)
                     if (resolvedName != null) {
-                        item.copy(label = item.label.replace("Médicament CIP ${item.cip13}", resolvedName))
+                        item.copy(label = item.label.replace(placeholder, resolvedName))
                     } else item
                 } else item
 

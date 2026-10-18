@@ -51,6 +51,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 /**
  * Dossier des boîtes déjà scannées.
@@ -66,22 +67,51 @@ import java.util.Locale
 class HistoryActivity : ComponentActivity() {
 
     private lateinit var prefs: Prefs
+    private val entries = mutableStateOf<List<Prefs.HistoryEntry>>(emptyList())
+    private val resolver = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Prefs(this)
         enableEdgeToEdge()
+        entries.value = prefs.historyEntries()
+        resolvePendingNames()
 
         setContent {
             PharmaScanTheme {
                 HistoryScreen(
-                    entries = prefs.historyEntries(),
+                    entries = entries.value,
                     alertMonths = prefs.alertMonths,
                     onClear = { prefs.clearHistoryEntries() },
                     onDelete = { prefs.removeHistoryEntry(it) },
                     onBack = { finish() }
                 )
             }
+        }
+    }
+
+    override fun onDestroy() {
+        resolver.shutdownNow()
+        super.onDestroy()
+    }
+
+    /**
+     * Une boîte scannée hors ligne garde le nom provisoire « Médicament CIP … » :
+     * on retente la BDPM à chaque ouverture de l'historique, en arrière-plan,
+     * et la liste se met à jour dès qu'un nom est trouvé.
+     */
+    private fun resolvePendingNames() {
+        val pending = prefs.unresolvedHistoryCips()
+        if (pending.isEmpty()) return
+        resolver.execute {
+            val api = MedicamentApi(prefs)
+            var renamed = false
+            for (cip13 in pending) {
+                if (Thread.currentThread().isInterrupted) return@execute
+                val name = api.lookupBlocking(cip13).name ?: continue
+                renamed = prefs.renameUnresolvedHistory(cip13, name) || renamed
+            }
+            if (renamed) runOnUiThread { if (!isDestroyed) entries.value = prefs.historyEntries() }
         }
     }
 }
@@ -118,7 +148,8 @@ private fun HistoryScreen(
     onBack: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var currentEntries by remember { mutableStateOf(entries) }
+    // Clé `entries` : les noms résolus en arrière-plan remplacent la liste affichée.
+    var currentEntries by remember(entries) { mutableStateOf(entries) }
     var cleared by remember { mutableStateOf(false) }
 
     val filtered = remember(query, currentEntries) {
