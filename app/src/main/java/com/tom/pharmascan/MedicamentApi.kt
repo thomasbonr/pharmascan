@@ -169,6 +169,13 @@ class MedicamentApi(private val prefs: Prefs) {
         private val PRODUCT_SEPARATORS = charArrayOf('x', '×')
 
         /**
+         * « 20 sachet(s) papier ... de 3 g » : poudre ou granulés en sachets
+         * unidoses. Pas d'unité comptable après « de », c'est le sachet qui
+         * se compte.
+         */
+        private val RE_SACHETS = Regex("""^\s*(\d+)\s+sachet""")
+
+        /**
          * Garde-fou de vraisemblance : la plus grosse valeur observée sur
          * l'échantillon réel était 500 (conditionnement hospitalier). Au-delà,
          * on suspecte une regex qui a mordu sur autre chose et on préfère ne
@@ -203,7 +210,8 @@ class MedicamentApi(private val prefs: Prefs) {
                 if (total != null) return format(total, m.groupValues[2])
             }
 
-            val per = RE_PER_CONTAINER.find(lower) ?: return null
+            val per = RE_PER_CONTAINER.find(lower)
+                ?: return RE_SACHETS.find(lower)?.groupValues?.get(1)?.toIntOrNull()?.let { format(it, "sachet") }
             val count = per.groupValues[1].toIntOrNull() ?: return null
             val multiplier = RE_MULTIPLIER.find(lower)?.groupValues?.get(1)?.toIntOrNull() ?: 1
             return format(count * multiplier, per.groupValues[2])

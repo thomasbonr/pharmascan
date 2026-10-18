@@ -104,4 +104,26 @@ class MedicamentApiTest {
         val result = MedicamentApi.extractQuantity(med, "3400930000007", form)
         assertEquals("20 comprimés", result)
     }
+
+    @Test
+    fun `sachets de poudre comptes en sachets`() {
+        val (med, form) = makeMed(
+            "3400930000007",
+            "20 sachet(s) papier aluminium polyéthylène de 3,76 g",
+            "poudre pour suspension buvable en sachet"
+        )
+        assertEquals("20 sachets", MedicamentApi.extractQuantity(med, "3400930000007", form))
+    }
+
+    @Test
+    fun `un seul sachet reste au singulier`() {
+        val (med, form) = makeMed("3400930000007", "1 sachet(s) de 4 g", "granulés en sachet")
+        assertEquals("1 sachet", MedicamentApi.extractQuantity(med, "3400930000007", form))
+    }
+
+    @Test
+    fun `flacon de poudre sans sachet retourne null`() {
+        val (med, form) = makeMed("3400930000007", "1 flacon(s) de 100 ml", "poudre pour suspension buvable en sachet")
+        assertNull(MedicamentApi.extractQuantity(med, "3400930000007", form))
+    }
 }
