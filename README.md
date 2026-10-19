@@ -9,11 +9,13 @@ Un scan = un geste. Pas de compte, pas de cloud, **100 % logiciel libre** (aucun
 - **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), validation dès la première lecture quand le code est complet (deux lectures sinon), auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
 - **Données enrichies** : nom, forme, quantité et conditions de délivrance (BDPM).
 - **GS1 rigoureux** : AI 01, 10, 17, 21, clé de contrôle GTIN vérifiée.
-- **Historique local** : chaque boîte scannée est conservée sur le téléphone (bouton ⏱ de l'écran de scan), avec recherche, suppression par balayage et alerte de péremption proche.
+- **Historique local** : chaque boîte scannée est conservée sur le téléphone (bouton ⏱ de l'écran de scan), avec recherche, suppression par balayage et alerte de péremption proche. Une boîte scannée hors ligne retrouve son nom dès que la BDPM répond. Le bouton Partager envoie la liste (péremption la plus proche en tête, boîtes périmées signalées) par message, mail ou note.
 - **Home Assistant optionnel** : désactivé par défaut, activable dans *Réglages → Home Assistant*. Hors ligne, les envois sont mis en file puis synchronisés au retour du réseau. Connexion par webhook limité à l'ajout dans la liste, sans accès complet à Home Assistant.
 - **Léger** : ~5 Mo (R8, ABI ARM uniquement).
 
 ## Compilation
+
+Tests : `./gradlew testDebugUnitTest` (parseur GS1, quantités BDPM, partage) et `python3 tools/gs1_reference/test_gs1.py` (référence GS1), lancés aussi par la CI GitHub sur `main` et les pull requests.
 
 Kotlin / Jetpack Compose, SDK min 24, cible 34, JDK 17.
 
