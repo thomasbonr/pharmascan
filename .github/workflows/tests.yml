@@ -1,0 +1,29 @@
+name: Tests
+
+# Unit tests only (no device, no APK): GS1 parsing, BDPM quantities, and the
+# Python reference port of the GS1 rules. Free on a public repository.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Kotlin unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: GS1 reference tests (Python)
+        working-directory: tools/gs1_reference
+        run: python3 test_gs1.py
