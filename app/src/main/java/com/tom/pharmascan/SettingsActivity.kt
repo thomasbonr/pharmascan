@@ -96,7 +96,8 @@ class SettingsActivity : ComponentActivity() {
                         autoZoom = prefs.autoZoomEnabled,
                         macroLens = prefs.macroLensEnabled,
                         afDiagnostics = prefs.afDiagnosticsEnabled,
-                        haEnabled = prefs.haEnabled
+                        haEnabled = prefs.haEnabled,
+                        expiryReminders = prefs.expiryRemindersEnabled
                     ),
                     onSave = { form ->
                         prefs.haUrl = form.url
@@ -110,6 +111,7 @@ class SettingsActivity : ComponentActivity() {
                         prefs.macroLensEnabled = form.macroLens
                         prefs.afDiagnosticsEnabled = form.afDiagnostics
                         prefs.haEnabled = form.haEnabled
+                        prefs.expiryRemindersEnabled = form.expiryReminders
                     },
                     onTest = { callback ->
                         executor.execute {
@@ -145,7 +147,8 @@ private data class SettingsForm(
     val autoZoom: Boolean,
     val macroLens: Boolean,
     val afDiagnostics: Boolean,
-    val haEnabled: Boolean
+    val haEnabled: Boolean,
+    val expiryReminders: Boolean
 )
 
 /** Secret du webhook : 32 caractères tirés d'un générateur cryptographique. */
@@ -215,6 +218,7 @@ private fun SettingsScreen(
     var macroLens by remember { mutableStateOf(initial.macroLens) }
     var afDiagnostics by remember { mutableStateOf(initial.afDiagnostics) }
     var haEnabled by remember { mutableStateOf(initial.haEnabled) }
+    var expiryReminders by remember { mutableStateOf(initial.expiryReminders) }
 
     var secretVisible by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
@@ -231,7 +235,8 @@ private fun SettingsScreen(
         autoZoom = autoZoom,
         macroLens = macroLens,
         afDiagnostics = afDiagnostics,
-        haEnabled = haEnabled
+        haEnabled = haEnabled,
+        expiryReminders = expiryReminders
     )
 
     val canTest = url.isNotBlank() &&
@@ -294,6 +299,24 @@ private fun SettingsScreen(
                     )
                 }
                 Switch(checked = autoZoom, onCheckedChange = { autoZoom = it })
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Rappel de péremption", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "Une notification quand une boîte de l'historique entre dans les mois " +
+                            "d'alerte, puis quand elle est périmée. Calculé sur le téléphone, rien n'est envoyé.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = expiryReminders, onCheckedChange = { expiryReminders = it })
             }
 
             Spacer(Modifier.height(24.dp))

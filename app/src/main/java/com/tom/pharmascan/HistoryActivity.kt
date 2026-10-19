@@ -1,10 +1,14 @@
 package com.tom.pharmascan
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,6 +82,7 @@ class HistoryActivity : ComponentActivity() {
         enableEdgeToEdge()
         entries.value = prefs.historyEntries()
         resolvePendingNames()
+        askNotificationPermissionOnce()
 
         setContent {
             PharmaScanTheme {
@@ -91,6 +96,23 @@ class HistoryActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    /**
+     * Android 13+ : le rappel de péremption a besoin de la permission de
+     * notifier. Demandée ici, une seule fois, quand l'historique contient une
+     * boîte datée : c'est là que le rappel prend son sens.
+     */
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (!prefs.expiryRemindersEnabled || prefs.notificationPermissionAsked) return
+        if (entries.value.none { it.expiryIso != null }) return
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        prefs.notificationPermissionAsked = true
+        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     /** Partage la liste affichée (filtre compris) en texte, via le menu de partage d'Android. */

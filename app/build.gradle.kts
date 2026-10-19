@@ -94,6 +94,9 @@ dependencies {
     // --- Divers ---
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // Rappel de péremption quotidien, qui survit au redémarrage du téléphone.
+    // 2.9.x : la 2.10 exige compileSdk 35.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 
     // --- Tests JVM (./gradlew testDebugUnitTest) ---
     testImplementation("junit:junit:4.13.2")

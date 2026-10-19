@@ -117,6 +117,16 @@ class Prefs(context: Context) {
         get() = prefs.getInt(KEY_ALERT_MONTHS, 3)
         set(v) = prefs.edit().putInt(KEY_ALERT_MONTHS, v).apply()
 
+    /** Notification locale quotidienne des boîtes bientôt périmées ou périmées (ExpiryWorker). */
+    var expiryRemindersEnabled: Boolean
+        get() = prefs.getBoolean(KEY_EXPIRY_REMINDERS, true)
+        set(v) = prefs.edit().putBoolean(KEY_EXPIRY_REMINDERS, v).apply()
+
+    /** La permission de notifier (Android 13+) n'est demandée qu'une fois, depuis l'historique. */
+    var notificationPermissionAsked: Boolean
+        get() = prefs.getBoolean(KEY_NOTIF_ASKED, false)
+        set(v) = prefs.edit().putBoolean(KEY_NOTIF_ASKED, v).apply()
+
     var soundEnabled: Boolean
         get() = prefs.getBoolean(KEY_SOUND, true)
         set(v) = prefs.edit().putBoolean(KEY_SOUND, v).apply()
@@ -299,6 +309,11 @@ class Prefs(context: Context) {
         }
     }
 
+    /** Étapes de péremption déjà notifiées (voir expiryNotice). */
+    var notifiedExpiryKeys: Set<String>
+        get() = cache.getStringSet(KEY_NOTIFIED_EXPIRY, emptySet())?.toSet() ?: emptySet()
+        set(v) = cache.edit().putStringSet(KEY_NOTIFIED_EXPIRY, v).apply()
+
     fun clearHistoryEntries() = synchronized(HISTORY_LOCK) { cache.edit().remove(KEY_HISTORY).apply() }
 
     private fun saveHistoryEntries(entries: List<HistoryEntry>) {
@@ -339,5 +354,8 @@ class Prefs(context: Context) {
         private const val KEY_QUEUE = "pending_queue"
         private const val KEY_SCANNED = "scanned_keys"
         private const val KEY_HISTORY = "history_entries"
+        private const val KEY_EXPIRY_REMINDERS = "expiry_reminders"
+        private const val KEY_NOTIF_ASKED = "notification_permission_asked"
+        private const val KEY_NOTIFIED_EXPIRY = "notified_expiry"
     }
 }

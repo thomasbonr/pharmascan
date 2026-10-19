@@ -186,6 +186,7 @@ class MainActivity : ComponentActivity() {
         ha.nameResolver = { cip13 -> api.lookupBlocking(cip13).name }
         cameraExecutor = Executors.newSingleThreadExecutor()
         workExecutor = Executors.newFixedThreadPool(2)
+        ExpiryWorker.schedule(this)
 
         // On vide souvent une armoire entière : l'écran ne doit pas s'éteindre
         // entre deux boîtes.
