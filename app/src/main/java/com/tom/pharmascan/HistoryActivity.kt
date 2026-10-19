@@ -1,5 +1,6 @@
 package com.tom.pharmascan
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -19,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -84,10 +86,22 @@ class HistoryActivity : ComponentActivity() {
                     alertMonths = prefs.alertMonths,
                     onClear = { prefs.clearHistoryEntries() },
                     onDelete = { prefs.removeHistoryEntry(it) },
+                    onShare = { shown -> share(shown) },
                     onBack = { finish() }
                 )
             }
         }
+    }
+
+    /** Partage la liste affichée (filtre compris) en texte, via le menu de partage d'Android. */
+    private fun share(shown: List<Prefs.HistoryEntry>) {
+        val today = isoDate(Calendar.getInstance())
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Armoire à pharmacie")
+            putExtra(Intent.EXTRA_TEXT, historyAsText(shown, today))
+        }
+        startActivity(Intent.createChooser(send, "Partager l'historique"))
     }
 
     override fun onDestroy() {
@@ -145,6 +159,7 @@ private fun HistoryScreen(
     alertMonths: Int,
     onClear: () -> Unit,
     onDelete: (Prefs.HistoryEntry) -> Unit,
+    onShare: (List<Prefs.HistoryEntry>) -> Unit,
     onBack: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -166,6 +181,13 @@ private fun HistoryScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour")
+                    }
+                },
+                actions = {
+                    if (filtered.isNotEmpty()) {
+                        IconButton(onClick = { onShare(filtered) }) {
+                            Icon(Icons.Default.Share, "Partager")
+                        }
                     }
                 }
             )
