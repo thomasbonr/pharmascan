@@ -195,10 +195,10 @@ class Prefs(context: Context) {
 
     /** Lit la liste ordonnée de clés de déduplication. */
     private fun readScannedList(): List<String> {
-        val raw = cache.getString(KEY_SCANNED, null) ?: return emptyList()
         return try {
-            // Migration depuis l'ancien StringSet : si le JSON ne parse pas
-            // comme un tableau, on réinitialise.
+            // Avant la 1.10, la même clé contenait un StringSet : getString
+            // lève alors ClassCastException, d'où la lecture dans le try.
+            val raw = cache.getString(KEY_SCANNED, null) ?: return emptyList()
             val arr = JSONArray(raw)
             (0 until arr.length()).map { arr.getString(it) }
         } catch (e: Exception) {

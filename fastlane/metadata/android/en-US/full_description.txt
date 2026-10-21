@@ -1,0 +1,17 @@
+<p>PharmaScan keeps an inventory of your medicine cabinet. Point the camera at the DataMatrix code of a French medicine box. The app reads the CIP13 code, the batch number and the expiry date. It then looks up the medicine name in the French public drug database (BDPM) and adds the box to your history.</p>
+
+<p><b>Features</b></p>
+<ul>
+<li>Fast, reliable DataMatrix reading: auto-zoom, torch, tap to focus, inverted codes on dark packaging.</li>
+<li>Name, form, pack size and dispensing conditions of the medicine.</li>
+<li>Local history with search, swipe to delete, and colour-coded expiry dates.</li>
+<li>Expiry reminder: one notification when a box is about to expire, and another when it has expired.</li>
+<li>Share the list by message, email or note.</li>
+<li>Manual entry when a code is damaged.</li>
+<li>Optional: send each box to a Home Assistant to-do list, with an offline queue.</li>
+</ul>
+
+<p><b>Privacy</b></p>
+<p>No account, no ads, no trackers. The history stays on the phone. By default, the only network request sends the CIP13 code to <i>medicaments-api.giygas.dev</i>, a service that exposes the BDPM, to look up the medicine name.</p>
+
+<p>Built for boxes sold in France (CIP13 / GS1 codes). The interface is in French.</p>

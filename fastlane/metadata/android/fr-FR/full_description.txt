@@ -1,0 +1,17 @@
+<p>PharmaScan tient l'inventaire de votre armoire à pharmacie. Visez le code DataMatrix d'une boîte de médicament française : l'application lit le code CIP13, le lot et la date de péremption, retrouve le nom du médicament dans la base publique des médicaments (BDPM) et l'ajoute à votre historique.</p>
+
+<p><b>Fonctionnalités</b></p>
+<ul>
+<li>Lecture rapide et fiable du DataMatrix : auto-zoom, torche, mise au point au toucher, codes inversés sur emballage sombre.</li>
+<li>Nom, forme, quantité et conditions de délivrance du médicament.</li>
+<li>Historique local avec recherche, suppression par balayage et péremptions en couleur.</li>
+<li>Rappel de péremption : une notification quand une boîte va bientôt périmer, puis quand elle est périmée.</li>
+<li>Partage de la liste par message, mail ou note.</li>
+<li>Saisie manuelle quand le code est abîmé.</li>
+<li>En option, envoi vers une liste de tâches Home Assistant, avec file d'attente hors ligne.</li>
+</ul>
+
+<p><b>Vie privée</b></p>
+<p>Pas de compte, pas de publicité, aucun traceur. L'historique reste sur le téléphone. La seule requête réseau par défaut envoie le code CIP13 au service <i>medicaments-api.giygas.dev</i>, qui expose la BDPM, pour retrouver le nom du médicament.</p>
+
+<p>Conçu pour les boîtes vendues en France (codes CIP13 / GS1).</p>

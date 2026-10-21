@@ -1,85 +1,111 @@
 # PharmaScan
 
-Scanner Android pour armoire à pharmacie : on vise le DataMatrix d'une boîte, l'appli en extrait CIP13, lot et péremption, résout le nom via la base publique des médicaments (BDPM) et l'enregistre dans un **historique local** consultable (recherche, péremptions colorées). En option, il peut aussi l'envoyer vers une liste Home Assistant, la péremption servant d'échéance.
+Application Android libre pour tenir l'inventaire de son armoire à pharmacie.
+On vise le DataMatrix d'une boîte de médicament française : PharmaScan lit le
+CIP13, le lot et la péremption, retrouve le nom dans la base publique des
+médicaments (BDPM) et l'enregistre dans un historique local.
 
-Un scan = un geste. Pas de compte, pas de cloud, **100 % logiciel libre** (aucun composant Google propriétaire).
+Pas de compte, pas de publicité, aucun traceur, aucune bibliothèque Google
+propriétaire.
 
 ## Fonctionnalités
 
-- **Scan fiable** : lecture du DataMatrix seul (l'EAN voisin est ignoré), validation dès la première lecture quand le code est complet (deux lectures sinon), auto-zoom, torche, tap-to-focus. Lectures de secours automatiques (code inversé sur emballage noir, autre binarisation, débruitage).
-- **Données enrichies** : nom, forme, quantité et conditions de délivrance (BDPM).
-- **GS1 rigoureux** : AI 01, 10, 17, 21, clé de contrôle GTIN vérifiée.
-- **Historique local** : chaque boîte scannée est conservée sur le téléphone (bouton ⏱ de l'écran de scan), avec recherche, suppression par balayage et alerte de péremption proche. Une boîte scannée hors ligne retrouve son nom dès que la BDPM répond. Le bouton Partager envoie la liste (péremption la plus proche en tête, boîtes périmées signalées) par message, mail ou note.
-- **Rappel de péremption** : une notification locale, une fois par jour, quand une boîte de l'historique entre dans les mois d'alerte, puis quand elle est périmée (chaque étape une seule fois). Désactivable dans *Réglages → Comportement*.
-- **Home Assistant optionnel** : désactivé par défaut, activable dans *Réglages → Home Assistant*. Hors ligne, les envois sont mis en file puis synchronisés au retour du réseau. Connexion par webhook limité à l'ajout dans la liste, sans accès complet à Home Assistant.
-- **Léger** : ~5 Mo (R8, ABI ARM uniquement).
+- **Scan rapide** : DataMatrix seul (l'EAN voisin est ignoré), auto-zoom, torche,
+  mise au point au toucher, codes inversés sur emballage sombre.
+- **Fiche médicament** : nom, forme, quantité et conditions de délivrance.
+- **Historique local** : recherche, suppression par balayage, péremptions en
+  couleur, partage de la liste. Une boîte scannée hors ligne retrouve son nom
+  dès que la BDPM répond.
+- **Rappel de péremption** : une notification quotidienne quand une boîte
+  approche de sa date, puis quand elle est périmée.
+- **Saisie manuelle** quand le code est illisible.
+- **Home Assistant (optionnel)** : chaque boîte est ajoutée à une liste de
+  tâches, avec la péremption comme échéance. Une file d'attente prend le relais
+  hors ligne.
+
+## Installation
+
+Téléchargez l'APK depuis les [releases GitHub](https://github.com/thomasbonr/pharmascan/releases).
+Android 7.0 ou plus récent, processeur ARM.
+
+Identifiant : `io.github.thomasbonr.pharmascan`. Empreinte SHA-256 du
+certificat de signature :
+
+```
+B5:6B:DE:1C:1D:A7:44:4F:87:C9:74:13:B5:B4:BE:6B:79:C4:F0:3E:4F:B0:D0:12:6B:D2:74:52:92:E9:A5:3F
+```
+
+## Vie privée
+
+L'historique reste sur le téléphone : la sauvegarde Android est désactivée et
+les réglages sont chiffrés. Par défaut, la seule requête réseau envoie le CIP13
+à [medicaments-api.giygas.dev](https://medicaments-api.giygas.dev), un service
+tiers qui expose la BDPM, pour retrouver le nom du médicament. Home Assistant
+ne reçoit rien tant qu'il n'est pas activé.
+
+## Home Assistant
+
+Désactivé par défaut. Pour l'activer :
+
+1. Dans Home Assistant, créez une **Liste de tâches locale** (par exemple
+   « Armoire à pharmacie ») et notez son `entity_id` (`todo.armoire_a_pharmacie`).
+2. Dans *Réglages → Home Assistant*, saisissez l'adresse de HA et l'`entity_id`,
+   activez **Utiliser un webhook** et générez l'identifiant.
+3. Copiez l'automatisation YAML proposée par l'application dans Home Assistant.
+
+Le webhook ne permet que l'ajout dans cette liste. Gardez `local_only: true`
+dans l'automatisation. Un jeton d'accès longue durée fonctionne aussi, mais il
+donne tous les droits du compte qui l'a créé.
+
+## Conseils de scan
+
+Tenez la boîte à 8-12 cm. L'autofocus est déjà en mode continu : inutile de
+toucher l'écran sans arrêt. Si un code résiste, *Réglages → Diagnostic*
+affiche l'état de l'autofocus et du décodeur pour savoir d'où vient le
+problème.
 
 ## Compilation
 
-Tests : `./gradlew testDebugUnitTest` (parseur GS1, quantités BDPM, partage, rappel de péremption) et `python3 tools/gs1_reference/test_gs1.py` (référence GS1), lancés aussi par la CI GitHub sur `main` et les pull requests.
+JDK 17 et SDK Android (compileSdk 34).
 
-Kotlin / Jetpack Compose, SDK min 24, cible 34, JDK 17.
-
-1. Seulement si vous utilisez Home Assistant en HTTP, renseignez son adresse exacte dans `app/src/main/res/xml/network_security_config.xml` (inutile en HTTPS).
-2. `./gradlew assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
-   (ou `./gradlew installDebug` pour installer directement).
-
-Le décodage repose sur [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) (Apache 2.0).
-
-## Configuration Home Assistant (optionnelle)
-
-À n'utiliser que si vous activez *Réglages → Home Assistant*.
-
-### Étape 1 : Créer la liste
-Dans HA, ajoutez une intégration **Liste de tâches locale** nommée "Armoire à pharmacie". Récupérez son `entity_id` (ex. `todo.armoire_a_pharmacie`).
-
-### Étape 2 : Connecter avec Webhook (Recommandé)
-Le webhook limite drastiquement les autorisations aux seules permissions d'écriture dans la liste.
-
-1. Dans les réglages de PharmaScan, activez **Utiliser un webhook** et générez l'identifiant.
-2. Saisissez l'`entity_id` dans l'application. 
-3. Copiez l'automatisation YAML fournie par l'application dans les automatisations de Home Assistant.
-
-L'automatisation ressemble à ceci :
-```yaml
-alias: PharmaScan - ajout medicament
-triggers:
-  - trigger: webhook
-    webhook_id: "<identifiant_genere>"
-    local_only: true
-actions:
-  - action: todo.add_item
-    target:
-      entity_id: todo.armoire_a_pharmacie
-    data:
-      item: "{{ trigger.json.item }}"
-      due_date: "{{ trigger.json.due_date | default(omit) }}"
-      description: "{{ trigger.json.description | default('', true) }}"
-mode: queued
-max: 25
+```sh
+./gradlew assembleRelease     # app/build/outputs/apk/release/
+./gradlew installDebug        # installe directement sur le téléphone branché
 ```
-> **Attention :** Vérifiez toujours que `local_only: true` est bien préservé dans HA pour empêcher les accès externes.
 
-*Mode Jeton : Il est possible d'utiliser un Jeton d'accès (Token) généré dans HA, mais ce mode est peu sécurisé car il donne accès à tous les privilèges du compte créateur.*
+Sans fichier `keystore.properties`, l'APK release sort non signé (c'est ce
+qu'attend F-Droid). Pour signer vos propres APK, créez ce fichier à la racine
+(il n'est pas versionné) :
 
-## Utilisation
+```properties
+storeFile=chemin/vers/release.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
 
-Approchez la boîte à 8-12 cm et visez le DataMatrix : l'appli scanne et bipe. Ne forcez pas l'autofocus à répétition, il est déjà en mode continu.
+Tests, lancés aussi par la CI à chaque push :
 
-### Diagnostic
-
-*Réglages → Diagnostic → Afficher le diagnostic* superpose à l'écran de scan : état de l'autofocus (cherche, net, verrouillé, échec), distance de mise au point, objectif utilisé et méthode/durée de la dernière lecture. Il permet de savoir si le problème vient de la caméra (flou, mauvais verrouillage) ou du décodage.
+```sh
+./gradlew testDebugUnitTest lintRelease
+python3 tools/gs1_reference/test_gs1.py
+```
 
 ## Architecture
 
-- `MainActivity.kt` : caméra et stratégie de mise au point (Camera2Interop).
-- `scan/` : `ZxingFrameScanner`, cascade de lectures et auto-zoom.
-- `diagnostic/` : état caméra/décodeur et son affichage.
-- `Gs1Parser.kt` : décodage et validation GS1 (testé).
-- `MedicamentApi.kt` : CIP13 → nom et quantité (BDPM).
-- `HomeAssistant.kt` : envoi (webhook ou jeton) et file d'attente persistante.
-- `ui/` : écrans Compose.
+| Fichier | Rôle |
+|---|---|
+| `MainActivity.kt` | Caméra, mise au point, enchaînement scan → BDPM → historique |
+| `scan/` | Lecture zxing-cpp, lectures de secours, auto-zoom |
+| `Gs1Parser.kt` | Décodage et validation GS1 (AI 01, 10, 17, 21, clé GTIN) |
+| `MedicamentApi.kt` | CIP13 → nom, forme et quantité |
+| `HistoryActivity.kt`, `HistoryShare.kt` | Historique et partage |
+| `ExpiryReminder.kt`, `ExpiryWorker.kt` | Rappel de péremption (WorkManager) |
+| `HomeAssistant.kt` | Envoi (webhook ou jeton) et file d'attente |
+| `ui/` | Écrans Compose |
+
+Les textes de la fiche F-Droid sont dans `fastlane/metadata/android/`.
 
 ## Licence
 
-[GNU GPLv3](LICENSE).
+[GNU GPLv3](LICENSE). Décodage par [zxing-cpp](https://github.com/zxing-cpp/zxing-cpp) (Apache 2.0).

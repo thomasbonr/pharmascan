@@ -1,7 +1,7 @@
 name: Tests
 
-# Unit tests only (no device, no APK): GS1 parsing, BDPM quantities, and the
-# Python reference port of the GS1 rules. Free on a public repository.
+# Unit tests (GS1 parsing, BDPM quantities, Python reference port of the GS1
+# rules), Android lint and an unsigned release build. No device needed.
 on:
   push:
     branches: [main]
@@ -21,8 +21,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Kotlin unit tests
-        run: ./gradlew --no-daemon testDebugUnitTest
+      - name: Kotlin unit tests, lint, release build
+        run: ./gradlew --no-daemon testDebugUnitTest lintRelease assembleRelease
 
       - name: GS1 reference tests (Python)
         working-directory: tools/gs1_reference

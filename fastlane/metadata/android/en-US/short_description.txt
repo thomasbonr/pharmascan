@@ -1,0 +1,1 @@
+Scan French medicine boxes and keep track of their expiry dates

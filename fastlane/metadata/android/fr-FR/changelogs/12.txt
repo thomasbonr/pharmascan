@@ -1,0 +1,6 @@
+• Rappel de péremption : notification locale quand une boîte de l'historique approche de sa date, puis quand elle est périmée.
+• Historique : partage de la liste ; les boîtes scannées hors ligne retrouvent leur nom.
+• Quantité comptée aussi pour les sachets.
+• « Ajouter quand même » proposé pour toute boîte déjà enregistrée.
+• Corrige un plantage au scan après une mise à jour depuis une ancienne version.
+• Icône thématique (Android 13+).

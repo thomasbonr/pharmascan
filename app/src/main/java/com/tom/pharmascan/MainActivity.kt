@@ -27,8 +27,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.CameraSelector
@@ -140,6 +142,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var workExecutor: ExecutorService
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Bip réutilisé d'un scan à l'autre, libéré dans onDestroy. */
+    private var toneGenerator: ToneGenerator? = null
 
     private var maxZoomRatio = 1f
     private var lastRawValue: String? = null
@@ -298,6 +303,8 @@ class MainActivity : ComponentActivity() {
         cameraExecutor.shutdown()
         workExecutor.shutdown()
         scanner?.close()
+        toneGenerator?.release()
+        toneGenerator = null
     }
 
     /**
@@ -328,6 +335,7 @@ class MainActivity : ComponentActivity() {
     // Caméra
     // ======================================================================
 
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun bindCamera(view: PreviewView) {
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
@@ -436,6 +444,7 @@ class MainActivity : ComponentActivity() {
      *  - CONTROL_AF_AVAILABLE_MODES doit contenir CONTINUOUS_PICTURE, sinon
      *    le mode continu qu'on force plus haut serait silencieusement ignoré.
      */
+    @OptIn(ExperimentalCamera2Interop::class)
     private fun selectCamera(provider: ProcessCameraProvider): CameraSelector {
         boundWithMacroLens = prefs.macroLensEnabled
         if (!prefs.macroLensEnabled) {
@@ -569,6 +578,8 @@ class MainActivity : ComponentActivity() {
         consecutiveCount = 0
         lastRawValue = null
         processing = true
+        // Nouvelle boîte : l'ajout forcé proposé pour la précédente n'a plus lieu d'être.
+        state.forceAddAction = null
         mainHandler.post { state.lockingOn = false }
         handleScan(raw)
     }
@@ -703,16 +714,18 @@ class MainActivity : ComponentActivity() {
                 "Boîte déjà enregistrée",
                 "CIP $cip13 · lot ${data.lot ?: "non précisé"}"
             )
-            // Proposer un ajout forcé pour les boîtes sans numéro de série
-            // (deux boîtes identiques du même lot produisent la même clé).
-            if (data.serial == null) {
-                state.forceAddAction = { processScan(data, cip13, boxKey) }
+            // Ajout forcé : deux boîtes sans numéro de série du même lot ont
+            // la même clé, et une boîte supprimée de l'historique reste connue.
+            state.forceAddAction = {
+                if (!processing) {
+                    processing = true
+                    processScan(data, cip13, boxKey)
+                }
             }
             releaseAfterDelay()
             return
         }
 
-        state.forceAddAction = null
         processScan(data, cip13, boxKey)
     }
 
@@ -815,6 +828,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun submitManual(cip13: String, expiryIso: String?) {
+        state.forceAddAction = null
         state.set(ScanUiState.Phase.PROCESSING, "Saisie manuelle", "CIP $cip13")
         runInBackground {
             val lookup = api.lookupBlocking(cip13)
@@ -824,7 +838,7 @@ class MainActivity : ComponentActivity() {
                 expiryIso?.let { append(" — périme le ${frenchDate(it)}") }
             }
             val result = if (prefs.haEnabled) {
-                ha.sendBlocking(HomeAssistant.Item(label, expiryIso, "CIP13 : $cip13 (saisie manuelle)"))
+                ha.sendBlocking(HomeAssistant.Item(label, expiryIso, "CIP13 : $cip13 (saisie manuelle)", cip13))
             } else null
             mainHandler.post {
                 val entryStatus = when (result) {
@@ -900,11 +914,11 @@ class MainActivity : ComponentActivity() {
         vibrate(if (success) 35 else 110)
         if (!prefs.soundEnabled) return
         try {
-            val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 70)
+            val tone = toneGenerator
+                ?: ToneGenerator(AudioManager.STREAM_MUSIC, 70).also { toneGenerator = it }
             tone.startTone(
                 if (success) ToneGenerator.TONE_PROP_BEEP else ToneGenerator.TONE_PROP_NACK, 140
             )
-            mainHandler.postDelayed({ tone.release() }, 300)
         } catch (e: Exception) {
             Log.w(TAG, "Bip impossible", e)
         }

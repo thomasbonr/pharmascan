@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -9,17 +11,33 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.tom.pharmascan"
+        // Identifiant public (F-Droid, IzzyOnDroid) : domaine GitHub du projet.
+        // Le package du code (namespace) reste com.tom.pharmascan.
+        applicationId = "io.github.thomasbonr.pharmascan"
         // 24 = minimum requis par CameraX.
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.11"
+        versionCode = 12
+        versionName = "1.12.0"
 
         // zxing-cpp embarque une bibliothèque native par ABI (~1,5 Mo chacune) :
         // on ne garde que les ABI des téléphones (x86 = émulateurs seulement).
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
+
+    // Clé de signature des APK publiés sur GitHub, lue dans keystore.properties
+    // (non versionné). Sans ce fichier, l'APK release sort non signé : c'est
+    // ce qu'attend F-Droid, qui compile et signe lui-même.
+    val keystoreFile = rootProject.file("keystore.properties")
+    val releaseSigning = if (keystoreFile.exists()) {
+        val props = Properties().apply { keystoreFile.inputStream().use { load(it) } }
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(props.getProperty("storeFile"))
+            storePassword = props.getProperty("storePassword")
+            keyAlias = props.getProperty("keyAlias")
+            keyPassword = props.getProperty("keyPassword")
+        }
+    } else null
 
     buildTypes {
         release {
@@ -29,8 +47,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Appli personnelle distribuée en APK : signée avec la clé de debug.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = releaseSigning
         }
     }
 
@@ -43,6 +60,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Pas de bloc chiffré de dépendances dans l'APK : illisible hors Google
+    // Play, il est refusé par F-Droid et IzzyOnDroid.
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
@@ -51,12 +75,6 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-        // API CameraX marquées expérimentales : Camera2Interop (autofocus
-        // continu forcé) et ImageProxy.image.
-        freeCompilerArgs.addAll(
-            "-opt-in=androidx.camera.camera2.interop.ExperimentalCamera2Interop",
-            "-opt-in=androidx.camera.core.ExperimentalGetImage",
-        )
     }
 }
 

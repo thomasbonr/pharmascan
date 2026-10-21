@@ -28,3 +28,9 @@ __pycache__/
 
 # Claude Code
 .claude/
+
+# Release signing (keystore.properties points to the keystore)
+keystore.properties
+
+# Local tooling
+.serena/

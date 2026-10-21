@@ -1,0 +1,6 @@
+• Expiry reminder: a local notification when a box in the history is close to its expiry date, and another when it has expired.
+• History: share the list; boxes scanned offline get their name back.
+• Pack size now also counted for sachets.
+• "Add anyway" offered for any box already recorded.
+• Fixed a crash when scanning after upgrading from an old version.
+• Themed icon (Android 13+).
